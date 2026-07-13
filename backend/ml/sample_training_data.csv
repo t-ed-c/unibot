@@ -1,0 +1,240 @@
+message,label
+when is the exam,DEADLINE_QUERY
+niaje,GREETING
+venue ya HCI,TIMETABLE_QUERY
+how much is my balance,FEE_QUERY
+check fee balance,FEE_QUERY
+yes,UNKNOWN
+okay,UNKNOWN
+sasa vipi,GREETING
+ni sawa,UNKNOWN
+CAT ni lini,DEADLINE_QUERY
+habari yako,GREETING
+nice,UNKNOWN
+tuna class leo,TIMETABLE_QUERY
+test date,DEADLINE_QUERY
+habari,GREETING
+morning,GREETING
+what lecture is next,TIMETABLE_QUERY
+good afternoon,GREETING
+lol,UNKNOWN
+fiti,UNKNOWN
+nisaidie,HELP
+what can I ask,HELP
+CAT ya security lini,DEADLINE_QUERY
+sasa unibot,GREETING
+sup,GREETING
+noted,UNKNOWN
+check my fees,FEE_QUERY
+wacha,UNKNOWN
+hmm,UNKNOWN
+uko aje,GREETING
+how does this bot work,HELP
+when is HCI CAT,DEADLINE_QUERY
+due when,DEADLINE_QUERY
+poa sana,UNKNOWN
+what classes on monday,TIMETABLE_QUERY
+mzuri,UNKNOWN
+nimelipa how much,FEE_QUERY
+what time is my class,TIMETABLE_QUERY
+whatever,UNKNOWN
+deni ya fees,FEE_QUERY
+mambo bro,GREETING
+when is my next class,TIMETABLE_QUERY
+nope,UNKNOWN
+when is machine learning class,TIMETABLE_QUERY
+deadline ya DSA,DEADLINE_QUERY
+hmm ok,UNKNOWN
+fees pending,FEE_QUERY
+my fee balance,FEE_QUERY
+what time is machine learning,TIMETABLE_QUERY
+what should I do,HELP
+hello bot,GREETING
+exam timetable,DEADLINE_QUERY
+HCI iko wapi,TIMETABLE_QUERY
+hi bot,GREETING
+deadline ya project,DEADLINE_QUERY
+niambie ML lecture time,TIMETABLE_QUERY
+DSA class time,TIMETABLE_QUERY
+when do exams start,DEADLINE_QUERY
+hi there,GREETING
+help me,HELP
+uko poa,GREETING
+haha,UNKNOWN
+fee balance yangu,FEE_QUERY
+true,UNKNOWN
+class za leo,TIMETABLE_QUERY
+support,HELP
+eh,UNKNOWN
+how much do I owe,FEE_QUERY
+remaining fees,FEE_QUERY
+jambo,GREETING
+vipi mambo,GREETING
+when do we submit assignment,DEADLINE_QUERY
+sasa,GREETING
+can you help,HELP
+deadline,DEADLINE_QUERY
+when is CCS 4101,TIMETABLE_QUERY
+saa ngapi ni ML,TIMETABLE_QUERY
+exam ya kesho,DEADLINE_QUERY
+aki,UNKNOWN
+due date ya ML,DEADLINE_QUERY
+my classes tomorrow,TIMETABLE_QUERY
+when is my HCI class,TIMETABLE_QUERY
+sure,UNKNOWN
+idk,UNKNOWN
+alright,UNKNOWN
+timetable ya kesho,TIMETABLE_QUERY
+confused,HELP
+can you assist,HELP
+nimebakisha how much,FEE_QUERY
+saa ngapi tuna ML,TIMETABLE_QUERY
+thanks,UNKNOWN
+what do you do,HELP
+hello,GREETING
+saidia,HELP
+fees left to pay,FEE_QUERY
+sawa,UNKNOWN
+okay then,UNKNOWN
+class schedule,TIMETABLE_QUERY
+yo,GREETING
+wow,UNKNOWN
+how much have I paid,FEE_QUERY
+HCI assignment deadline,DEADLINE_QUERY
+kwanza,UNKNOWN
+assist me,HELP
+ML assignment when due,DEADLINE_QUERY
+niaje bot,GREETING
+maybe,UNKNOWN
+wassup,GREETING
+what is this,HELP
+how does this work,HELP
+room ya security,TIMETABLE_QUERY
+sasa mkubwa,GREETING
+hi,GREETING
+fine,UNKNOWN
+how do I join,HELP
+what are your commands,HELP
+hallo,GREETING
+when are exams,DEADLINE_QUERY
+naomba msaada,HELP
+nice one,UNKNOWN
+project deadline,DEADLINE_QUERY
+due date ya assignment,DEADLINE_QUERY
+mambo vipi,GREETING
+that one,UNKNOWN
+hola,GREETING
+how do you work,HELP
+fee arrears,FEE_QUERY
+good evening,GREETING
+submit assignment when,DEADLINE_QUERY
+haya,UNKNOWN
+sielewi,HELP
+which room is DSA,TIMETABLE_QUERY
+guide me,HELP
+pending fees,FEE_QUERY
+hey there,GREETING
+oh,UNKNOWN
+great,UNKNOWN
+submission deadline,DEADLINE_QUERY
+kuna class leo,TIMETABLE_QUERY
+I dont understand,HELP
+fee status,FEE_QUERY
+fee balance,FEE_QUERY
+got it,UNKNOWN
+help please,HELP
+where is my project class,TIMETABLE_QUERY
+fees balance,FEE_QUERY
+random text,UNKNOWN
+hey bot,GREETING
+when is DSA CAT,DEADLINE_QUERY
+what commands,HELP
+vipi,GREETING
+options,HELP
+fiti kabisa,UNKNOWN
+habari za asubuhi,GREETING
+when is security assignment due,DEADLINE_QUERY
+classes today,TIMETABLE_QUERY
+assignment deadline,DEADLINE_QUERY
+when is the test,DEADLINE_QUERY
+balance ya fees,FEE_QUERY
+what is my fee balance,FEE_QUERY
+assignment due when,DEADLINE_QUERY
+outstanding fees,FEE_QUERY
+good morning,GREETING
+no,UNKNOWN
+ok thanks,UNKNOWN
+class ya security iko wapi,TIMETABLE_QUERY
+k,UNKNOWN
+how to register,HELP
+last date ya submission,DEADLINE_QUERY
+when should I submit,DEADLINE_QUERY
+I am stuck,HELP
+nataka msaada,HELP
+when does HCI start,TIMETABLE_QUERY
+lini tunasubmit,DEADLINE_QUERY
+habari gani,GREETING
+fees zangu,FEE_QUERY
+how to use this,HELP
+msaada,HELP
+when is continuous assessment,DEADLINE_QUERY
+greetings,GREETING
+my timetable,TIMETABLE_QUERY
+how much to clear fees,FEE_QUERY
+where do we have HCI,TIMETABLE_QUERY
+niaje buda,GREETING
+hey,GREETING
+lecture za kesho,TIMETABLE_QUERY
+project submission date,DEADLINE_QUERY
+yeah,UNKNOWN
+school fees balance,FEE_QUERY
+how much fees left,FEE_QUERY
+monday classes,TIMETABLE_QUERY
+fees I owe,FEE_QUERY
+asante sana,UNKNOWN
+sindio,UNKNOWN
+fee statement,FEE_QUERY
+asante,UNKNOWN
+thank you,UNKNOWN
+venue ya project,TIMETABLE_QUERY
+poa,UNKNOWN
+nataka kujua fee yangu,FEE_QUERY
+mmh,UNKNOWN
+menu,HELP
+when is the ML CAT,DEADLINE_QUERY
+cool,UNKNOWN
+where is DSA today,TIMETABLE_QUERY
+tunasubmit lini,DEADLINE_QUERY
+help,HELP
+mambo,GREETING
+CAT date,DEADLINE_QUERY
+my school fees,FEE_QUERY
+ala,UNKNOWN
+commands,HELP
+how do I use you,HELP
+instructions,HELP
+when is CAT 2,DEADLINE_QUERY
+hello there,GREETING
+cool cool,UNKNOWN
+what can you do,HELP
+salamu,GREETING
+assignment ya ML due lini,DEADLINE_QUERY
+when is my exam,DEADLINE_QUERY
+where is CCS 4102,TIMETABLE_QUERY
+timetable ya leo,TIMETABLE_QUERY
+which class do I have now,TIMETABLE_QUERY
+balance yangu,FEE_QUERY
+I need help,HELP
+HCI ni saa ngapi,TIMETABLE_QUERY
+alright then,UNKNOWN
+how,HELP
+nina class saa ngapi,TIMETABLE_QUERY
+what next,HELP
+kesho kuna class,TIMETABLE_QUERY
+test ni lini,DEADLINE_QUERY
+lini ni exam,DEADLINE_QUERY
+exam ni lini,DEADLINE_QUERY
+tell me what to do,HELP
+when do I have security class,TIMETABLE_QUERY
+lecture venue,TIMETABLE_QUERY
+need assistance,HELP

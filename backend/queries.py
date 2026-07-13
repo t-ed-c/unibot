@@ -1,0 +1,187 @@
+"""
+UniBot — Student query handling.
+Routes registered students' messages to the right answer.
+Starts with keyword routing; ML classifier (Model 1) plugs in
+here once trained — same interface, swap the router.
+"""
+
+import re
+import json
+import logging
+from datetime import datetime
+
+from database import get_db, sha256, log_engagement, _ph
+from timetable import get_timetable_for
+from auth import get_student
+
+logger = logging.getLogger("unibot.queries")
+
+DAY_NAMES = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+
+
+def handle_student_query(phone: str, message: str) -> str:
+    """Main entry — identify the student, classify intent, answer."""
+    student = get_student(phone)
+    if not student:
+        return "Please text JOIN to register first."
+
+    # sqlite Row vs psycopg2 RealDict compatibility
+    year = student["year_group"] if hasattr(student, "keys") else student[4]
+    id_hash = student["student_id_hash"] if hasattr(student, "keys") else student[0]
+
+    intent = classify_intent(message)
+    log_engagement(id_hash, "QUERY", f"{intent}: {message[:100]}")
+
+    if intent == "TIMETABLE_QUERY":
+        return answer_timetable(message, year)
+    if intent == "DEADLINE_QUERY":
+        return answer_deadline(message, year)
+    if intent == "FEE_QUERY":
+        return answer_fee()
+    if intent == "GREETING":
+        return ("👋 Hello! Ask me anything about your classes.\n\n"
+                "Try: \"When is my HCI class?\" or "
+                "\"What classes do I have today?\"")
+    if intent == "COMMUNITY":
+        return answer_community(year)
+    if intent == "CHANGE_YEAR":
+        return ("To change your year group, text HELP and "
+                "describe the correction needed — an admin "
+                "will process it.")
+
+    # UNKNOWN — low confidence path
+    return ("🤔 I'm not sure what you're asking.\n\n"
+            "Try:\n"
+            "• \"When is [unit] class?\"\n"
+            "• \"Classes today\"\n"
+            "• \"Deadlines\"\n"
+            "• MENU for all options")
+
+
+# ─────────────────────────────────────────────────────────────
+def classify_intent(message: str) -> str:
+    """
+    v0: keyword-based baseline router.
+    v1 (ML): replace body with trained TF-IDF + LogisticRegression —
+    this function IS the baseline for the classifier comparison.
+    """
+    m = message.lower()
+
+    if re.search(r"\b(hi|hello|hey|sasa|mambo|niaje|habari|morning|afternoon)\b", m):
+        return "GREETING"
+    if "community" in m or "group link" in m or "peer group" in m:
+        return "COMMUNITY"
+    if "change year" in m:
+        return "CHANGE_YEAR"
+    if re.search(r"\b(fee|fees|balance|pay|paybill|lipa)\b", m):
+        return "FEE_QUERY"
+    if re.search(r"\b(deadline|due|assignment|cat|exam|submit)\b", m):
+        return "DEADLINE_QUERY"
+    if re.search(r"\b(class|classes|timetable|lecture|venue|room|when|where|leo|today|tomorrow|saa)\b", m):
+        return "TIMETABLE_QUERY"
+
+    return "UNKNOWN"
+
+
+# ─────────────────────────────────────────────────────────────
+def answer_timetable(message: str, year: int) -> str:
+    m = message.upper()
+
+    # Which day is being asked about?
+    day = None
+    if "TODAY" in m or "LEO" in m:
+        day = datetime.now().strftime("%A").upper()
+    elif "TOMORROW" in m or "KESHO" in m:
+        idx = datetime.now().weekday()
+        day = DAY_NAMES[(idx + 1) % 7]
+    else:
+        for d in DAY_NAMES:
+            if d in m:
+                day = d
+                break
+
+    # Which unit? (look for unit code fragments or names)
+    unit = None
+    code_match = re.search(r"(CCS|SAS|SPA|HRD)\s*(\d{4})", m)
+    if code_match:
+        unit = f"{code_match.group(1)} {code_match.group(2)}"
+    else:
+        name_map = {
+            "HCI": "CCS 4101", "HUMAN COMPUTER": "CCS 4101",
+            "MACHINE LEARNING": "CCS 4102", "ML": "CCS 4102",
+            "SECURITY": "CCS 4103",
+            "PROJECT": "CCS 4199",
+        }
+        for name, code in name_map.items():
+            if name in m:
+                unit = code
+                break
+
+    rows = get_timetable_for(year, day=day, unit_code=unit)
+
+    if not rows:
+        scope = f" for {unit}" if unit else ""
+        scope += f" on {day.title()}" if day else ""
+        return (f"📅 No classes found{scope} for Year {year}.\n"
+                "The timetable may not be loaded yet, or "
+                "check your spelling. Text MENU for options.")
+
+    def field(r, name, idx):
+        return r[name] if hasattr(r, "keys") else r[idx]
+
+    lines = [f"📅 Year {year} — " + (f"{day.title()}" if day else "Timetable")]
+    for r in rows[:8]:
+        lines.append(
+            f"\n{field(r,'unit_code',1)} {field(r,'unit_name',2) or ''}\n"
+            f"  {field(r,'day',3).title()} {field(r,'time_slot',4)} → {field(r,'venue',5)}"
+            + (f"\n  {field(r,'lecturer',6)}" if field(r, 'lecturer', 6) else "")
+        )
+    if len(rows) > 8:
+        lines.append(f"\n(+{len(rows)-8} more — ask for a specific day)")
+    return "\n".join(lines)
+
+
+def answer_deadline(message: str, year: int) -> str:
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_ph("""SELECT unit_code, title, due_date FROM deadlines
+                       ORDER BY due_date ASC LIMIT 5"""))
+        rows = cur.fetchall()
+
+    if not rows:
+        return ("📌 No deadlines recorded yet.\n"
+                "Deadlines appear here when your lecturers add them.")
+
+    def field(r, name, idx):
+        return r[name] if hasattr(r, "keys") else r[idx]
+
+    lines = ["📌 Upcoming deadlines:"]
+    for r in rows:
+        lines.append(f"\n• {field(r,'unit_code',0)} — {field(r,'title',1)}\n"
+                     f"  Due: {field(r,'due_date',2)}")
+    return "\n".join(lines)
+
+
+def answer_fee() -> str:
+    return ("💰 Fee balances are on the student portal:\n"
+            "https://students.dkut.ac.ke\n\n"
+            "Log in with your registration number.\n"
+            "UniBot does not store fee information.")
+
+
+def answer_community(year: int) -> str:
+    # Community group links are stored in FAQ table with key 'community_yearN'
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_ph("SELECT answer FROM faq WHERE keywords = %s"),
+                    (f"community_year{year}",))
+        row = cur.fetchone()
+
+    if not row:
+        return ("📚 No peer group exists for your year yet. "
+                "Check back soon.")
+    link = row[0] if not hasattr(row, "keys") else row["answer"]
+    return (f"📚 Year {year} CS Peer Community\n\n"
+            f"🔗 {link}\n\n"
+            f"⚠️ This is a non-official student space.\n"
+            f"Official updates come through UniBot only.")

@@ -58,7 +58,7 @@ def handle_registration_message(phone: str, message: str) -> str:
             set_session(phone, {"state": "AWAIT_ID"})
             return ("Welcome to UniBot DKUT 🎓\n\n"
                     "To register, enter your Student ID.\n"
-                    "Format: C026-01-0722/2023")
+                    "Format: C026-XX-XXXX/XXXX (check your student card).")
         return ("👋 Hello! This is UniBot — the DKUT CS "
                 "academic assistant.\n\n"
                 "Text JOIN to register and receive class "
@@ -69,7 +69,7 @@ def handle_registration_message(phone: str, message: str) -> str:
         student_id = message.upper().strip()
         if not STUDENT_ID_PATTERN.match(student_id):
             return ("❌ Invalid format.\n"
-                    "Student ID should look like: C026-01-0722/2023\n"
+                    "Student ID should look like: C026-XX-XXXX/XXXX\n"
                     "Check your student card and try again.")
 
         # Check if this ID is already registered (phone-change case)

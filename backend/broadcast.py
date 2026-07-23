@@ -14,6 +14,7 @@ import re
 import json
 import logging
 from datetime import datetime
+from crypto import decrypt_phone
 
 from database import get_db, sha256, log_engagement, _ph
 
@@ -98,12 +99,12 @@ def execute_broadcast(sender_phone, sender_name, sender_role, target, body):
     # Resolve target students
     if target.isdigit():
         year = int(target)
-        query = "SELECT student_id_hash, phone_hash FROM students WHERE year_group = %s AND status = 'ACTIVE'"
+        query = "SELECT student_id_hash, phone_enc FROM students WHERE year_group = %s AND status = 'ACTIVE'"
         params = (year,)
         target_label = f"Year {year}"
     else:
         # unit targeting: naive v0 — students whose units JSON contains it
-        query = "SELECT student_id_hash, phone_hash FROM students WHERE units LIKE %s AND status = 'ACTIVE'"
+        query = "SELECT student_id_hash, phone_enc FROM students WHERE units LIKE %s AND status = 'ACTIVE'"
         params = (f"%{target.upper()}%",)
         target_label = target.upper()
 
@@ -141,10 +142,10 @@ def execute_broadcast(sender_phone, sender_name, sender_role, target, body):
         # real number. In production, store an encrypted phone alongside the
         # hash (AES) OR keep a delivery mapping in Redis at registration.
         # v0 approach: deliveries executed via Redis-stored plain mapping.
-        ok = send_whatsapp_by_hash(field(s, "phone_hash", 1), formatted)
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute(_ph("""INSERT INTO delivery_log
+        real_phone = decrypt_phone(field(s, "phone_enc", 1))
+        ok = send_whatsapp(real_phone, formatted) if real_phone else False
+        cur = conn.cursor()
+        cur.execute(_ph("""INSERT INTO delivery_log
                            (broadcast_id, student_id_hash, sent_at, delivered_at, status)
                            VALUES (%s, %s, CURRENT_TIMESTAMP,
                                    CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,

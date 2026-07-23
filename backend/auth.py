@@ -12,6 +12,7 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from crypto import encrypt_phone
 
 from database import get_db, sha256, log_engagement, _ph
 from session import get_session, set_session, clear_session
@@ -173,15 +174,15 @@ def complete_registration(phone, student_id, email, year, is_transfer=False):
             row = cur.fetchone()
             old_phone_hash = row[0] if row else None
             cur.execute(_ph("""UPDATE students
-                       SET phone_hash = %s, previous_phone_hash = %s,
+                       SET phone_hash = %s, phone_enc = %s, previous_phone_hash = %s,
                            email = %s, year_group = %s
                        WHERE student_id_hash = %s"""),
-                        (phone_hash, old_phone_hash, email, year, id_hash))
+                        (phone_hash, encrypt_phone(phone), old_phone_hash, email, year, id_hash))
         else:
             cur.execute(_ph("""INSERT INTO students
-                       (student_id_hash, phone_hash, email, year_group)
-                       VALUES (%s, %s, %s, %s)"""),
-                        (id_hash, phone_hash, email, year))
+                       (student_id_hash, phone_hash, phone_enc, email, year_group)
+                       VALUES (%s, %s, %s, %s, %s)"""),
+                        (id_hash, phone_hash, encrypt_phone(phone), email, year))
 
     # Log AFTER the connection is closed — avoids SQLite lock
     event = "PHONE_TRANSFER" if is_transfer else "REGISTERED"

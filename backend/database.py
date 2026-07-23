@@ -60,6 +60,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS students (
             student_id_hash TEXT PRIMARY KEY,
             phone_hash      TEXT UNIQUE NOT NULL,
+            phone_enc       TEXT,        
             previous_phone_hash TEXT,
             email           TEXT NOT NULL,
             year_group      INTEGER NOT NULL,

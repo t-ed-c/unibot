@@ -5,7 +5,8 @@ Main FastAPI application entry point.
 Author: Potason (DKUT Computer Science)
 Supervisor: Mr. Patrick Naivasha
 """
-
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import PlainTextResponse
 from contextlib import asynccontextmanager

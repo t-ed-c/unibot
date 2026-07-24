@@ -133,29 +133,35 @@ def execute_broadcast(sender_phone, sender_name, sender_role, target, body):
                  f"Sent: {datetime.now().strftime('%a %d %b %Y, %I:%M %p')}\n"
                  f"— UniBot DKUT")
 
+  # Send to everyone first, collect results
+    results = []
     delivered, failed = 0, 0
     for s in students:
         def field(r, name, idx):
             return r[name] if hasattr(r, "keys") else r[idx]
         sid = field(s, "student_id_hash", 0)
-        # NOTE: we store phone HASHES — for actual delivery Twilio needs the
-        # real number. In production, store an encrypted phone alongside the
-        # hash (AES) OR keep a delivery mapping in Redis at registration.
-        # v0 approach: deliveries executed via Redis-stored plain mapping.
         real_phone = decrypt_phone(field(s, "phone_enc", 1))
         ok = send_whatsapp(real_phone, formatted) if real_phone else False
-        cur = conn.cursor()
-        cur.execute(_ph("""INSERT INTO delivery_log
-                           (broadcast_id, student_id_hash, sent_at, delivered_at, status)
-                           VALUES (%s, %s, CURRENT_TIMESTAMP,
-                                   CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,
-                                   %s)""") if False else _ph("""INSERT INTO delivery_log
-                           (broadcast_id, student_id_hash, sent_at, status)
-                           VALUES (%s, %s, CURRENT_TIMESTAMP, %s)"""),
-                        (broadcast_id, sid, "DELIVERED" if ok else "FAILED"))
-        log_engagement(sid, "BROADCAST_RECEIVED", f"broadcast:{broadcast_id}")
+        results.append((sid, "DELIVERED" if ok else "FAILED"))
         delivered += 1 if ok else 0
         failed += 0 if ok else 1
+
+    # Log everything in ONE connection
+    with get_db() as conn:
+        cur = conn.cursor()
+        for sid, status in results:
+            cur.execute(_ph("""INSERT INTO delivery_log
+                           (broadcast_id, student_id_hash, sent_at, status)
+                           VALUES (%s, %s, CURRENT_TIMESTAMP, %s)"""),
+                        (broadcast_id, sid, status))
+
+    for sid, _ in results:
+        log_engagement(sid, "BROADCAST_RECEIVED", f"broadcast:{broadcast_id}")
+
+    return (f"✅ Broadcast sent to {target_label}\n"
+            f"Delivered: {delivered}\n"
+            f"Failed: {failed}\n"
+            f"Broadcast ID: {broadcast_id}")
 
     return (f"✅ Broadcast sent to {target_label}\n"
             f"Delivered: {delivered}\n"

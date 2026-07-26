@@ -120,10 +120,10 @@ def execute_broadcast(sender_phone, sender_name, sender_role, target, body):
                     (sha256(sender_phone), sender_name, sender_role, body,
                      int(target) if target.isdigit() else None,
                      None if target.isdigit() else target.upper()))
-        # Get broadcast id (works in both DBs)
-        cur.execute("SELECT MAX(id) FROM broadcasts")
-        broadcast_id = cur.fetchone()[0]
-
+        # Get broadcast id (works in both SQLite and PostgreSQL)
+        cur.execute("SELECT MAX(id) AS max_id FROM broadcasts")
+        row = cur.fetchone()
+        broadcast_id = row["max_id"] if hasattr(row, "keys") else row[0]
     if not students:
         return f"⚠️ No registered students found in {target_label}. Broadcast saved but not delivered."
 

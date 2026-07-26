@@ -15,9 +15,14 @@ import json
 import logging
 from datetime import datetime
 from crypto import decrypt_phone
+from datetime import datetime, timezone, timedelta
 
 from database import get_db, sha256, log_engagement, _ph
 
+EAT = timezone(timedelta(hours=3))  # East Africa Time (Kenya)
+
+def now_kenya():
+    return datetime.now(EAT)
 logger = logging.getLogger("unibot.broadcast")
 
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
@@ -130,7 +135,7 @@ def execute_broadcast(sender_phone, sender_name, sender_role, target, body):
     tag = "🔵 OFFICIAL" if sender_role == "LECTURER" else "🟡 CLASS REP"
     formatted = (f"📢 {tag} — {sender_name}\n\n"
                  f"{body}\n\n"
-                 f"Sent: {datetime.now().strftime('%a %d %b %Y, %I:%M %p')}\n"
+                 f"Sent: {now_kenya().strftime('%a %d %b %Y, %I:%M %p')}\n"
                  f"— UniBot DKUT")
 
   # Send to everyone first, collect results

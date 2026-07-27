@@ -9,3 +9,4 @@ psycopg2-binary==2.9.10
 scikit-learn==1.6.1
 python-dotenv==1.0.1
 cryptography==44.0.0
+resend==2.5.1

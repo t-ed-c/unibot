@@ -198,28 +198,27 @@ def complete_registration(phone, student_id, email, year, is_transfer=False):
 
 # ─────────────────────────────────────────────────────────────
 def send_otp_email(to_email: str, otp: str):
-    """Send OTP via Gmail SMTP. Returns (success, error)."""
-    if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
-        # Development mode — log OTP instead of sending
+    """Send OTP via Resend API (HTTPS — works on Railway). Returns (success, error)."""
+    api_key = os.getenv("RESEND_API_KEY", "")
+
+    if not api_key:
         logger.warning(f"DEV MODE — OTP for {to_email}: {otp}")
         return True, "dev-mode"
 
     try:
-        msg = MIMEMultipart()
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = to_email
-        msg["Subject"] = "UniBot DKUT — Verification Code"
-        body = (f"Your UniBot verification code is:\n\n"
-                f"        {otp}\n\n"
-                f"This code expires in 5 minutes.\n"
-                f"Do not share it with anyone.\n\n"
-                f"— UniBot, Department of Computer Science, DKUT")
-        msg.attach(MIMEText(body, "plain"))
-
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.send_message(msg)
+        import resend
+        resend.api_key = api_key
+        resend.Emails.send({
+            "from": "UniBot DKUT <onboarding@resend.dev>",
+            "to": [to_email],
+            "subject": "UniBot DKUT — Verification Code",
+            "text": (f"Your UniBot verification code is:\n\n"
+                     f"        {otp}\n\n"
+                     f"This code expires in 5 minutes.\n"
+                     f"Do not share it with anyone.\n\n"
+                     f"— UniBot, Department of Computer Science, DKUT"),
+        })
         return True, ""
     except Exception as e:
+        logger.error(f"Resend email failed: {e}")
         return False, str(e)

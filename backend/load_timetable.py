@@ -7,7 +7,7 @@ import sys
 from database import init_db
 from timetable import load_timetable_into_db
 
-DEFAULT_PATH = "../data/CS_MAY-AUG_2026_TEACHING_TIMETABLE_DRAFT_4__18_05_2026.xlsx"
+DEFAULT_PATH = "data/CS_MAY-AUG_2026_TEACHING_TIMETABLE_DRAFT_4__18_05_2026.xlsx"
 
 
 def main():

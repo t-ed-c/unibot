@@ -216,7 +216,8 @@ def send_otp_email(to_email: str, otp: str):
                 f"— UniBot, Department of Computer Science, DKUT")
         msg.attach(MIMEText(body, "plain"))
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.send_message(msg)
         return True, ""

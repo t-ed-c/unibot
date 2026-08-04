@@ -172,7 +172,7 @@ def complete_registration(phone, student_id, email, year, is_transfer=False):
             cur.execute(_ph("SELECT phone_hash FROM students WHERE student_id_hash = %s"),
                         (id_hash,))
             row = cur.fetchone()
-            old_phone_hash = row[0] if row else None
+            old_phone_hash = (list(row.values())[0] if hasattr(row, "keys") else row[0]) if row else None
             cur.execute(_ph("""UPDATE students
                        SET phone_hash = %s, phone_enc = %s, previous_phone_hash = %s,
                            email = %s, year_group = %s

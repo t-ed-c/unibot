@@ -6,10 +6,13 @@ Three conflict types checked when a timetable entry or event is added:
   3. STUDENT   — same year group, same day+time, two events
 """
 
+import re
 import logging
 from database import get_db, _ph
 
 logger = logging.getLogger("unibot.conflicts")
+
+ONLINE_VENUES = ("TBD", "TBA", "ONLINE", "")
 
 
 def check_all_conflicts(unit_code, day, time_slot, venue, lecturer, year_group):
@@ -23,7 +26,7 @@ def check_all_conflicts(unit_code, day, time_slot, venue, lecturer, year_group):
 
 def check_venue_conflict(venue, day, time_slot, year_group, unit_code):
     """Same venue booked by a different class at the same day+time."""
-    if not venue or venue.upper() in ("TBD", "TBA", ""):
+    if not venue or venue.upper() in ONLINE_VENUES:
         return []
 
     with get_db() as conn:
@@ -115,6 +118,22 @@ def scan_existing_timetable():
                 "venue": r[3], "lecturer": r[4], "year_group": r[5]
             })
 
+    return scan_entries(all_entries)
+
+
+def same_person(a: str, b: str) -> bool:
+    """'Mr. Kaburu' and 'Kaburu' are the same lecturer."""
+    def key(name):
+        return re.sub(r"^(MR|MRS|MS|DR|PROF)\.?\s*", "", (name or "").strip().upper())
+    return bool(key(a)) and key(a) == key(b)
+
+
+def scan_entries(all_entries):
+    """
+    Find clashes in a list of sessions without touching the database.
+    Used to check an uploaded timetable BEFORE it goes live, and by
+    scan_existing_timetable() for the live one.
+    """
     found = []
     seen = set()
 
@@ -124,8 +143,8 @@ def scan_existing_timetable():
                 continue
 
             if (a["venue"] and b["venue"]
-                    and a["venue"].upper() not in ("TBD", "TBA", "")
-                    and a["venue"] == b["venue"]
+                    and a["venue"].upper() not in ONLINE_VENUES
+                    and a["venue"].upper() == b["venue"].upper()
                     and (a["unit_code"], a["year_group"]) != (b["unit_code"], b["year_group"])):
                 key = ("VENUE", a["day"], a["time_slot"], a["venue"])
                 if key not in seen:
@@ -137,8 +156,7 @@ def scan_existing_timetable():
                                   f"{b['unit_code']} (Y{b['year_group']})"
                     })
 
-            if (a["lecturer"] and b["lecturer"]
-                    and a["lecturer"] == b["lecturer"]
+            if (same_person(a["lecturer"], b["lecturer"])
                     and a["unit_code"] != b["unit_code"]):
                 key = ("LECTURER", a["day"], a["time_slot"], a["lecturer"])
                 if key not in seen:
@@ -148,6 +166,17 @@ def scan_existing_timetable():
                         "detail": f"{a['lecturer']} on {a['day']} {a['time_slot']}: "
                                   f"{a['unit_code']} (Y{a['year_group']}) and "
                                   f"{b['unit_code']} (Y{b['year_group']})"
+                    })
+
+            if (a["year_group"] == b["year_group"]
+                    and a["unit_code"] != b["unit_code"]):
+                key = ("STUDENT", a["day"], a["time_slot"], a["year_group"])
+                if key not in seen:
+                    seen.add(key)
+                    found.append({
+                        "type": "STUDENT",
+                        "detail": f"Year {a['year_group']} on {a['day']} {a['time_slot']}: "
+                                  f"{a['unit_code']} and {b['unit_code']} at the same time"
                     })
 
     return found

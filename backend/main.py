@@ -17,6 +17,7 @@ from auth import handle_registration_message, is_registered
 from queries import handle_student_query
 from broadcast import handle_sender_command, is_registered_sender
 from session import get_session, GLOBAL_COMMANDS, handle_global_command
+from admin import router as admin_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("unibot")
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="UniBot DKUT", lifespan=lifespan)
-
+app.include_router(admin_router)
 
 @app.get("/")
 def health_check():

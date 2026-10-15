@@ -1,16 +1,21 @@
 """
 UniBot — Timetable Excel parser.
-Built for the real DKUT CS timetable format:
+Built for the DKUT CS timetable format:
+  - Title row:  "TEACHING TIMETABLE FOR MAY-AUGUST 2026 SEMESTER"
   - Time slots in a header row (7AM-8AM ... 5PM-6PM)
   - Days in column 0 (MONDAY ... FRIDAY)
-  - Year groups in column 1 (e.g. "CS 4.1")
+  - Year groups in column 1 (e.g. "YEAR 4.1", "CS 4.1")
   - Cells contain "CCS 4101 RCL 1" (unit code + venue)
+  - Grid ends at the "TIMETABLE CO-ORDINATOR" signature row
+  - Below the grid: a unit list (code | name | ... | lecturer)
+
+Unit names and lecturers are read from that unit list in the file
+itself, so a new semester's timetable works without code changes.
 
 Validated against: CS_MAY-AUG_2026_TEACHING_TIMETABLE_DRAFT_4
 """
 
 import re
-import json
 import logging
 import pandas as pd
 
@@ -20,121 +25,234 @@ logger = logging.getLogger("unibot.timetable")
 
 DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
 
-# Known unit names — extend as more units are added
-UNIT_NAMES = {
-    "CCS 4101": "Human Computer Interaction",
-    "CCS 4102": "Machine Learning",
-    "CCS 4103": "Computer Security",
-    "CCS 4199": "Computer Science Project",
-}
+UNIT_CODE_RE = re.compile(r"\b([A-Z]{3})\s*(\d{4})\b")
+TIME_RE = re.compile(r"\d{1,2}\s*(AM|PM)", re.I)
+YEAR_LABEL_RE = re.compile(r"\b(?:YEAR|CS|YR)\s*(\d)", re.I)
+GRID_END_RE = re.compile(r"CO-?ORDINATOR|^COD\b", re.I)
+SEMESTER_RE = re.compile(r"TIMETABLE\s+FOR\s+(.+?)\s+SEMESTER", re.I)
 
-UNIT_LECTURERS = {
-    "CCS 4101": "Mr. Opondo",
-    "CCS 4102": "Mr. Kaburu",
-    "CCS 4103": "Mr. Naivasha",
-    "CCS 4199": "Mr. Naivasha",
-}
+# Words in the unit list that are not lecturer names
+NOT_A_LECTURER = {"ALL STAFF", "ONLINE", "DONE", "TBA", "TBD"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Small helpers
+# ─────────────────────────────────────────────────────────────
+def _clean(value) -> str:
+    """Cell value as a single-spaced string ('' for empty cells)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def normalise_unit_code(text: str):
+    """'CCS  3104' or 'CCS3104' -> 'CCS 3104'. None if no code found."""
+    m = UNIT_CODE_RE.search(text.upper())
+    return f"{m.group(1)} {m.group(2)}" if m else None
+
+
+def normalise_venue(text: str) -> str:
+    """
+    Make the same room always look the same, so conflict detection
+    can compare rooms: 'RCL1' -> 'RCL 1', '(RC18)' -> 'RC 18',
+    '- combined with IT' -> 'combined with IT'.
+    """
+    v = _clean(text).strip("()-– ").upper()
+    v = re.sub(r"^([A-Z]+)\s*(\d+)$", r"\1 \2", v)
+    return v or "TBD"
+
+
+def normalise_lecturer(text: str) -> str:
+    """'MR  OPONDO' -> 'Mr. Opondo', 'DR.KAMAU' -> 'Dr. Kamau'."""
+    t = _clean(text).upper()
+    if not t or t in NOT_A_LECTURER:
+        return ""
+    m = re.match(r"^(MR|MRS|MS|DR|PROF)\.?\s*(.+)$", t)
+    if m:
+        title, name = m.group(1).title(), m.group(2)
+        return f"{title}. {name.title()}"
+    return t.title()
 
 
 def parse_year_group(label: str):
-    """Extract year number from labels like 'CS 4.1', 'CS 3.1', 'YEAR 2'."""
-    m = re.search(r"(\d)", str(label))
+    """Extract year number from 'YEAR 4.1', 'CS 3.1', 'YR 2'. None otherwise."""
+    m = YEAR_LABEL_RE.search(str(label))
     return int(m.group(1)) if m else None
 
 
 def parse_cell(cell_text: str):
     """
-    Parse a timetable cell like 'CCS 4101 RCL 1' into (unit_code, venue).
-    Returns (None, None) if the cell doesn't contain a recognisable unit.
+    Parse a timetable cell like 'CCS 4101 RCL 1' or 'CCS 4101(RCL1)'
+    into (unit_code, venue). Returns (None, None) if no unit code.
     """
-    text = str(cell_text).strip()
-    m = re.match(r"([A-Z]{2,4})\s*(\d{4})\s*(.*)", text)
+    text = _clean(cell_text)
+    m = UNIT_CODE_RE.search(text.upper())
     if not m:
         return None, None
     unit_code = f"{m.group(1)} {m.group(2)}"
-    venue = m.group(3).strip() or "TBD"
+    venue = normalise_venue(text[m.end():])
     return unit_code, venue
+
+
+# ─────────────────────────────────────────────────────────────
+# Reading the whole file
+# ─────────────────────────────────────────────────────────────
+def find_semester_label(df) -> str:
+    """Read 'MAY-AUGUST 2026' from the title row, or '' if missing."""
+    for r in range(min(15, len(df))):
+        for v in df.iloc[r].tolist():
+            m = SEMESTER_RE.search(_clean(v))
+            if m:
+                return m.group(1).strip().upper()
+    return ""
+
+
+def parse_unit_list(df, start_row: int) -> dict:
+    """
+    Read the unit list below the grid. Each row looks like:
+      '1.' | 'CCS 2103' | 'Operating Systems' | 2 | 3 | 'NAIVASHA'
+    Returns {unit_code: {"unit_name": ..., "lecturer": ...}}.
+    """
+    units = {}
+    for r in range(start_row, len(df)):
+        cells = [_clean(v) for v in df.iloc[r].tolist()]
+        cells = [c for c in cells if c]
+        if not cells:
+            continue
+
+        # The unit code is in the first or second cell
+        code_idx = next((i for i, c in enumerate(cells[:2])
+                         if normalise_unit_code(c)), None)
+        if code_idx is None:
+            continue
+        code = normalise_unit_code(cells[code_idx])
+        rest = cells[code_idx + 1:]
+
+        # Name = first remaining cell that has letters and is not a number
+        name = next((c for c in rest if re.search(r"[A-Za-z]{3}", c)
+                     and not c.upper().startswith("MOVED")), "")
+
+        # Lecturer = last remaining cell that is a word, not the name,
+        # not a number, not a note like "Moved to Year 1" or "DONE"
+        lecturer = ""
+        for c in reversed(rest):
+            cu = c.upper()
+            if c == name or not re.search(r"[A-Za-z]", c):
+                continue
+            if cu.startswith("MOVED") or cu in {"DONE"} or re.fullmatch(r"\d+\s*HRS?", cu):
+                continue
+            lecturer = normalise_lecturer(c)
+            break
+
+        # First listing of a code wins (later sheets/rows are older notes)
+        units.setdefault(code, {"unit_name": name.title() if name.isupper() else name,
+                                "lecturer": lecturer})
+    return units
 
 
 def parse_timetable_excel(file_path: str, sheet_name=None):
     """
-    Parse the DKUT timetable Excel into a list of session dicts.
-    Returns (sessions, errors).
+    Parse a DKUT timetable Excel file.
+    Returns a dict:
+      sessions  — list of class sessions
+      units     — {code: {unit_name, lecturer}} from the unit list
+      semester  — e.g. 'MAY-AUGUST 2026' ('' if not found)
+      sheet     — sheet that was read
+      errors    — cells inside the grid that could not be read
     """
     xl = pd.ExcelFile(file_path)
     sheet = sheet_name or xl.sheet_names[0]
-    df = pd.read_excel(file_path, sheet_name=sheet, header=None)
+    df = pd.read_excel(xl, sheet_name=sheet, header=None)
 
-    sessions = []
-    errors = []
+    result = {"sessions": [], "units": {}, "semester": find_semester_label(df),
+              "sheet": sheet, "errors": []}
 
     # 1. Find the header row containing time slots
-    time_row_idx = None
-    time_slots = {}
+    time_row_idx, time_slots = None, {}
     for r in range(min(15, len(df))):
-        row_vals = [str(v) for v in df.iloc[r].tolist()]
-        matches = [v for v in row_vals if re.search(r"\d{1,2}\s*(AM|PM)", str(v), re.I)]
-        if len(matches) >= 4:
+        row = df.iloc[r].tolist()
+        if sum(1 for v in row if TIME_RE.search(_clean(v))) >= 4:
             time_row_idx = r
-            for c, v in enumerate(df.iloc[r].tolist()):
-                if pd.notna(v) and re.search(r"\d{1,2}\s*(AM|PM)", str(v), re.I):
-                    time_slots[c] = str(v).strip()
+            time_slots = {c: _clean(v).upper().replace(" ", "")
+                          for c, v in enumerate(row) if TIME_RE.search(_clean(v))}
             break
 
     if time_row_idx is None:
-        return [], ["Could not find the time-slot header row"]
+        result["errors"].append("Could not find the row of time slots (e.g. 7AM-8AM).")
+        return result
 
-    # 2. Walk the remaining rows
-    current_day = None
+    # 2. Walk the grid until the signature row
+    current_day, grid_end = None, len(df)
     for r in range(time_row_idx + 1, len(df)):
         row = df.iloc[r]
+        row_text = " ".join(_clean(v) for v in row.tolist())
+        if GRID_END_RE.search(row_text):
+            grid_end = r
+            break
 
-        # Day label in column 0?
-        c0 = str(row[0]).strip().upper() if pd.notna(row[0]) else ""
+        c0 = _clean(row[0]).upper()
         if c0 in DAYS:
             current_day = c0
-
         if not current_day:
             continue
 
-        # Year group in column 1
-        year_group = parse_year_group(row[1]) if pd.notna(row[1]) else None
+        year_group = parse_year_group(row[1]) if len(row) > 1 else None
         if year_group is None:
             continue
 
-        # Each time-slot column
         for col, slot in time_slots.items():
             if col >= len(row):
                 continue
-            cell = row[col]
-            if pd.isna(cell) or not str(cell).strip():
+            cell = _clean(row[col])
+            if not cell:
                 continue
             unit_code, venue = parse_cell(cell)
             if unit_code is None:
-                errors.append(f"Unparseable cell at row {r}, {slot}: '{cell}'")
+                result["errors"].append(f"{current_day.title()} {slot}, Year {year_group}: '{cell}'")
                 continue
-            sessions.append({
+            result["sessions"].append({
                 "unit_code": unit_code,
-                "unit_name": UNIT_NAMES.get(unit_code, ""),
                 "day": current_day,
                 "time_slot": slot,
                 "venue": venue,
-                "lecturer": UNIT_LECTURERS.get(unit_code, ""),
                 "year_group": year_group,
             })
 
-    logger.info(f"Parsed {len(sessions)} sessions, {len(errors)} errors from {sheet}")
-    return sessions, errors
+    # 3. Unit names and lecturers from the list below the grid
+    result["units"] = parse_unit_list(df, grid_end)
+    for s in result["sessions"]:
+        info = result["units"].get(s["unit_code"], {})
+        s["unit_name"] = info.get("unit_name", "")
+        s["lecturer"] = info.get("lecturer", "")
+
+    logger.info(f"Parsed {len(result['sessions'])} sessions, {len(result['units'])} units, "
+                f"{len(result['errors'])} unreadable cells from '{sheet}' "
+                f"({result['semester'] or 'semester not found'})")
+    return result
 
 
-def load_timetable_into_db(file_path: str, sheet_name=None, replace=True):
-    """Parse and store into the timetable table. Returns summary dict."""
-    sessions, errors = parse_timetable_excel(file_path, sheet_name)
+# ─────────────────────────────────────────────────────────────
+# Saving to the database
+# ─────────────────────────────────────────────────────────────
+def save_timetable(parsed: dict, semester: str = "", filename: str = "",
+                   uploaded_by: str = "", conflict_count: int = 0):
+    """
+    Replace the live timetable and unit list with a parsed file,
+    and record the upload in timetable_uploads.
+    Refuses to replace anything if the file produced no sessions,
+    so a wrong file can never wipe the working timetable.
+    """
+    sessions = parsed["sessions"]
+    if not sessions:
+        raise ValueError("No classes were found in this file, so the current "
+                         "timetable was kept. Check that it is the department "
+                         "timetable in the usual layout.")
+
+    semester = (semester or parsed.get("semester") or "UNNAMED SEMESTER").strip().upper()
 
     with get_db() as conn:
         cur = conn.cursor()
-        if replace:
-            cur.execute("DELETE FROM timetable")
+        cur.execute("DELETE FROM timetable")
         for s in sessions:
             cur.execute(_ph("""INSERT INTO timetable
                 (unit_code, unit_name, day, time_slot, venue, lecturer, year_group)
@@ -142,9 +260,49 @@ def load_timetable_into_db(file_path: str, sheet_name=None, replace=True):
                 (s["unit_code"], s["unit_name"], s["day"], s["time_slot"],
                  s["venue"], s["lecturer"], s["year_group"]))
 
-    return {"loaded": len(sessions), "errors": errors}
+        cur.execute("DELETE FROM units")
+        for code, info in parsed["units"].items():
+            cur.execute(_ph("INSERT INTO units (unit_code, unit_name, lecturer) VALUES (%s, %s, %s)"),
+                        (code, info["unit_name"], info["lecturer"]))
+
+        cur.execute(_ph("""INSERT INTO timetable_uploads
+            (semester, filename, sessions, units, conflicts, uploaded_by)
+            VALUES (%s, %s, %s, %s, %s, %s)"""),
+            (semester, filename[:200], len(sessions), len(parsed["units"]),
+             conflict_count, uploaded_by[:100]))
+
+    logger.info(f"Timetable replaced: {semester}, {len(sessions)} sessions")
+    return {"semester": semester, "loaded": len(sessions), "units": len(parsed["units"])}
 
 
+def load_timetable_into_db(file_path: str, sheet_name=None, semester: str = "",
+                           uploaded_by: str = "command line"):
+    """Parse a file, check it for clashes, and make it the live timetable."""
+    from conflict import scan_entries
+    parsed = parse_timetable_excel(file_path, sheet_name)
+    conflicts = scan_entries(parsed["sessions"])
+    saved = save_timetable(parsed, semester=semester,
+                           filename=file_path.replace("\\", "/").split("/")[-1],
+                           uploaded_by=uploaded_by, conflict_count=len(conflicts))
+    return {**saved, "errors": parsed["errors"], "conflicts": conflicts}
+
+
+def get_current_timetable_info():
+    """Latest upload record, or None if no timetable has been uploaded."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""SELECT semester, filename, sessions, units, conflicts,
+                              uploaded_by, uploaded_at
+                       FROM timetable_uploads ORDER BY id DESC LIMIT 1""")
+        row = cur.fetchone()
+    if not row:
+        return None
+    keys = ["semester", "filename", "sessions", "units", "conflicts", "uploaded_by", "uploaded_at"]
+    return {k: (row[k] if hasattr(row, "keys") else row[i]) for i, k in enumerate(keys)}
+
+
+# ─────────────────────────────────────────────────────────────
+# Queries used by the bot
 # ─────────────────────────────────────────────────────────────
 def get_timetable_for(year_group: int, day: str = None, unit_code: str = None):
     """Query timetable for a student's year, optionally filtered."""
@@ -156,9 +314,34 @@ def get_timetable_for(year_group: int, day: str = None, unit_code: str = None):
     if unit_code:
         q += " AND unit_code LIKE %s"
         params.append(f"%{unit_code}%")
-    q += " ORDER BY CASE day WHEN 'MONDAY' THEN 1 WHEN 'TUESDAY' THEN 2 WHEN 'WEDNESDAY' THEN 3 WHEN 'THURSDAY' THEN 4 WHEN 'FRIDAY' THEN 5 ELSE 6 END, time_slot"
-
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(_ph(q), tuple(params))
-        return cur.fetchall()
+        rows = cur.fetchall()
+
+    # Sort in Python: as text, "2PM" would come before "8AM"
+    def order(r):
+        day_ = r["day"] if hasattr(r, "keys") else r[3]
+        slot = r["time_slot"] if hasattr(r, "keys") else r[4]
+        return (DAYS.index(day_) if day_ in DAYS else 9, slot_start_hour(slot))
+    return sorted(rows, key=order)
+
+
+def slot_start_hour(slot: str) -> int:
+    """'2PM-3PM' -> 14, '11AM-12PM' -> 11, '12PM-1PM' -> 12."""
+    m = re.match(r"\s*(\d{1,2})\s*(AM|PM)", str(slot), re.I)
+    if not m:
+        return 99
+    hour, half = int(m.group(1)) % 12, m.group(2).upper()
+    return hour + 12 if half == "PM" else hour
+
+
+def get_units_for_year(year_group: int):
+    """Units on the live timetable for one year: [(code, name), ...]."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_ph("""SELECT DISTINCT unit_code, unit_name FROM timetable
+                           WHERE year_group = %s"""), (year_group,))
+        rows = cur.fetchall()
+    return [((r["unit_code"], r["unit_name"]) if hasattr(r, "keys") else (r[0], r[1]))
+            for r in rows]

@@ -106,6 +106,36 @@ def init_db():
             year_group  INTEGER NOT NULL,
             uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+        # ── Units (names + lecturers, read from the timetable file) ──
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS units (
+            unit_code   TEXT PRIMARY KEY,
+            unit_name   TEXT,
+            lecturer    TEXT
+        )""")
+
+        # ── Timetable upload history (one row per published file) ──
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS timetable_uploads (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            semester    TEXT NOT NULL,
+            filename    TEXT,
+            sessions    INTEGER,
+            units       INTEGER,
+            conflicts   INTEGER,
+            uploaded_by TEXT,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""" if not USE_POSTGRES else """
+        CREATE TABLE IF NOT EXISTS timetable_uploads (
+            id          SERIAL PRIMARY KEY,
+            semester    TEXT NOT NULL,
+            filename    TEXT,
+            sessions    INTEGER,
+            units       INTEGER,
+            conflicts   INTEGER,
+            uploaded_by TEXT,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
 
         # ── Deadlines ──
         cur.execute("""

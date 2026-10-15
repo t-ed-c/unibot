@@ -8,11 +8,20 @@ here once trained — same interface, swap the router.
 import re
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from database import get_db, sha256, log_engagement, _ph
-from timetable import get_timetable_for
+from timetable import get_timetable_for, get_units_for_year
 from auth import get_student
+
+EAT = timezone(timedelta(hours=3))  # Kenya time — the server runs on UTC
+
+# Words too common in unit names to identify one unit on their own
+COMMON_WORDS = {"COMPUTER", "SCIENCE", "SYSTEMS", "SYSTEM", "AND", "OF", "THE", "TO",
+                "IN", "FOR", "I", "II", "III", "DESIGN", "ANALYSIS", "COMMUNICATION",
+                "SKILLS", "INTRODUCTION", "PRINCIPLES", "UNDERSTANDING", "CLASS"}
+# Initials that would match ordinary words in a message
+BAD_INITIALS = {"CS", "IT", "AT", "IN", "IS", "TO", "OF", "AS"}
 
 logger = logging.getLogger("unibot.queries")
 
@@ -87,13 +96,13 @@ def classify_intent(message: str) -> str:
 def answer_timetable(message: str, year: int) -> str:
     m = message.upper()
 
-    # Which day is being asked about?
+    # Which day is being asked about? (Kenya time, not server time)
+    now = datetime.now(EAT)
     day = None
     if "TODAY" in m or "LEO" in m:
-        day = datetime.now().strftime("%A").upper()
+        day = now.strftime("%A").upper()
     elif "TOMORROW" in m or "KESHO" in m:
-        idx = datetime.now().weekday()
-        day = DAY_NAMES[(idx + 1) % 7]
+        day = DAY_NAMES[(now.weekday() + 1) % 7]
     else:
         for d in DAY_NAMES:
             if d in m:
@@ -102,20 +111,11 @@ def answer_timetable(message: str, year: int) -> str:
 
     # Which unit? (look for unit code fragments or names)
     unit = None
-    code_match = re.search(r"(CCS|SAS|SPA|HRD)\s*(\d{4})", m)
+    code_match = re.search(r"\b([A-Z]{3})\s*(\d{4})\b", m)
     if code_match:
         unit = f"{code_match.group(1)} {code_match.group(2)}"
     else:
-        name_map = {
-            "HCI": "CCS 4101", "HUMAN COMPUTER": "CCS 4101",
-            "MACHINE LEARNING": "CCS 4102", "ML": "CCS 4102",
-            "SECURITY": "CCS 4103",
-            "PROJECT": "CCS 4199",
-        }
-        for name, code in name_map.items():
-            if name in m:
-                unit = code
-                break
+        unit = find_unit_in_message(m, year)
 
     rows = get_timetable_for(year, day=day, unit_code=unit)
 
@@ -139,6 +139,44 @@ def answer_timetable(message: str, year: int) -> str:
     if len(rows) > 8:
         lines.append(f"\n(+{len(rows)-8} more — ask for a specific day)")
     return "\n".join(lines)
+
+
+def unit_aliases(units):
+    """
+    Build the names students might use for each unit, from the unit
+    names in the timetable file — so a new semester needs no code edits.
+    'Human Computer Interaction' -> HUMAN COMPUTER INTERACTION, HCI, INTERACTION
+    'Machine Learning'           -> MACHINE LEARNING, ML, LEARNING, MACHINE
+    A single word is only used if no other unit of that year shares it.
+    """
+    word_count = {}
+    for _, name in units:
+        for w in set(re.findall(r"[A-Z]+", (name or "").upper())):
+            word_count[w] = word_count.get(w, 0) + 1
+
+    aliases = []
+    for code, name in units:
+        name = re.sub(r"\s+", " ", (name or "").upper()).strip(" :")
+        if not name:
+            continue
+        aliases.append((name, code))
+        words = re.findall(r"[A-Z]+", name)
+        initials = "".join(w[0] for w in words if w not in {"AND", "OF", "THE", "TO", "IN", "FOR"})
+        if len(initials) >= 2 and initials not in BAD_INITIALS:
+            aliases.append((initials, code))
+        for w in words:
+            if len(w) >= 4 and w not in COMMON_WORDS and word_count.get(w) == 1:
+                aliases.append((w, code))
+    # Longest first, so "MACHINE LEARNING" beats "LEARNING"
+    return sorted(aliases, key=lambda a: -len(a[0]))
+
+
+def find_unit_in_message(message_upper: str, year: int):
+    """Match a unit name or nickname in the message to a unit code."""
+    for alias, code in unit_aliases(get_units_for_year(year)):
+        if re.search(rf"\b{re.escape(alias)}\b", message_upper):
+            return code
+    return None
 
 
 def answer_deadline(message: str, year: int) -> str:

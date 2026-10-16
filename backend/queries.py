@@ -39,6 +39,9 @@ def handle_student_query(phone: str, message: str) -> str:
     id_hash = student["student_id_hash"] if hasattr(student, "keys") else student[0]
 
     intent = classify_intent(message)
+    # Just a unit name ("embedded systems", "HCI") means "when is that class?"
+    if intent == "UNKNOWN" and find_unit_in_message(message.upper(), year):
+        intent = "TIMETABLE_QUERY"
     log_engagement(id_hash, "QUERY", f"{intent}: {message[:100]}")
 
     if intent == "TIMETABLE_QUERY":
@@ -48,9 +51,12 @@ def handle_student_query(phone: str, message: str) -> str:
     if intent == "FEE_QUERY":
         return answer_fee()
     if intent == "GREETING":
+        example = example_unit_name(year)
         return ("👋 Hello! Ask me anything about your classes.\n\n"
-                "Try: \"When is my HCI class?\" or "
+                f"Try: \"When is {example}?\" or "
                 "\"What classes do I have today?\"")
+    if intent == "THANKS":
+        return "👍 Anytime! Ask me about your classes whenever you need."
     if intent == "COMMUNITY":
         return answer_community(year)
     if intent == "CHANGE_YEAR":
@@ -78,6 +84,9 @@ def classify_intent(message: str) -> str:
 
     if re.search(r"\b(hi|hello|hey|sasa|mambo|niaje|habari|morning|afternoon)\b", m):
         return "GREETING"
+    if re.fullmatch(r"\s*(ok|okay|k|kk|sawa|poa|fiti|cool|nice|thanks|thank you|thanx|asante|asante sana|"
+                    r"noted|got it|alright|great|👍|🙏)[\s.!]*", m):
+        return "THANKS"
     if "community" in m or "group link" in m or "peer group" in m:
         return "COMMUNITY"
     if "change year" in m:
@@ -86,7 +95,7 @@ def classify_intent(message: str) -> str:
         return "FEE_QUERY"
     if re.search(r"\b(deadline|due|assignment|cat|exam|submit)\b", m):
         return "DEADLINE_QUERY"
-    if re.search(r"\b(class|classes|timetable|lecture|venue|room|when|where|leo|today|tomorrow|saa)\b", m):
+    if re.search(r"\b(class|classes|timetable|lecture|lectures|venue|room|when|where|time|leo|today|tomorrow|kesho|saa|monday|tuesday|wednesday|thursday|friday|saturday)\b", m):
         return "TIMETABLE_QUERY"
 
     return "UNKNOWN"
@@ -96,18 +105,17 @@ def classify_intent(message: str) -> str:
 def answer_timetable(message: str, year: int) -> str:
     m = message.upper()
 
-    # Which day is being asked about? (Kenya time, not server time)
+    # Which day(s) are being asked about? (Kenya time, not server time)
     now = datetime.now(EAT)
-    day = None
+    days = []
     if "TODAY" in m or "LEO" in m:
-        day = now.strftime("%A").upper()
-    elif "TOMORROW" in m or "KESHO" in m:
-        day = DAY_NAMES[(now.weekday() + 1) % 7]
-    else:
-        for d in DAY_NAMES:
-            if d in m:
-                day = d
-                break
+        days.append(now.strftime("%A").upper())
+    if "TOMORROW" in m or "KESHO" in m:
+        days.append(DAY_NAMES[(now.weekday() + 1) % 7])
+    for d in DAY_NAMES:
+        if d in m and d not in days:
+            days.append(d)
+    days.sort(key=DAY_NAMES.index)
 
     # Which unit? (look for unit code fragments or names)
     unit = None
@@ -117,11 +125,18 @@ def answer_timetable(message: str, year: int) -> str:
     else:
         unit = find_unit_in_message(m, year)
 
-    rows = get_timetable_for(year, day=day, unit_code=unit)
+    if days:
+        rows = [r for d in days for r in get_timetable_for(year, day=d, unit_code=unit)]
+    else:
+        rows = get_timetable_for(year, unit_code=unit)
+    day_label = " & ".join(d.title() for d in days)
+
+    if not rows and days and not unit:
+        return f"📅 No classes on {day_label} for Year {year}. 🎉"
 
     if not rows:
         scope = f" for {unit}" if unit else ""
-        scope += f" on {day.title()}" if day else ""
+        scope += f" on {day_label}" if days else ""
         return (f"📅 No classes found{scope} for Year {year}.\n"
                 "The timetable may not be loaded yet, or "
                 "check your spelling. Text MENU for options.")
@@ -135,7 +150,7 @@ def answer_timetable(message: str, year: int) -> str:
     # Year 1 has two programmes (CS and FS) — label each class so students can tell
     several_groups = len({group(r) for r in rows}) > 1
 
-    lines = [f"📅 Year {year} — " + (f"{day.title()}" if day else "Timetable")]
+    lines = [f"📅 Year {year} — " + (day_label if days else "Timetable")]
     for r in rows[:8]:
         tag = f"[{group(r)}] " if several_groups and group(r) else ""
         lines.append(
@@ -146,6 +161,14 @@ def answer_timetable(message: str, year: int) -> str:
     if len(rows) > 8:
         lines.append(f"\n(+{len(rows)-8} more — ask for a specific day)")
     return "\n".join(lines)
+
+
+def example_unit_name(year: int) -> str:
+    """A real unit from this semester for the greeting, e.g. 'Embedded Systems'."""
+    for code, name in get_units_for_year(year):
+        if name and code.startswith("CCS"):
+            return name
+    return "my next class"
 
 
 def unit_aliases(units):

@@ -247,7 +247,22 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # ── Upgrades for databases created before a column existed ──
+    add_column_if_missing("timetable", "group_label", "TEXT")
+
     logger.info("All tables created/verified")
+
+
+def add_column_if_missing(table: str, column: str, col_type: str):
+    """Add a column to an existing table without touching its data."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        if USE_POSTGRES:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}")
+        else:
+            cur.execute(f"PRAGMA table_info({table})")
+            if column not in [r[1] for r in cur.fetchall()]:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
 def log_engagement(student_id_hash: str, event_type: str, detail: str = ""):

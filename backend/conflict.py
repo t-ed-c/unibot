@@ -3,7 +3,7 @@ UniBot — Scheduling conflict detection.
 Three conflict types checked when a timetable entry or event is added:
   1. VENUE     — same room, same day+time, different classes
   2. LECTURER  — same lecturer, same day+time, two events
-  3. STUDENT   — same year group, same day+time, two events
+  3. STUDENT   — same student group, same day+time, two events
 """
 
 import re
@@ -105,7 +105,7 @@ def scan_existing_timetable():
     """Scan the ENTIRE loaded timetable for conflicts that already exist."""
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT unit_code, day, time_slot, venue, lecturer, year_group FROM timetable")
+        cur.execute("SELECT unit_code, day, time_slot, venue, lecturer, year_group, group_label FROM timetable")
         rows = cur.fetchall()
 
     all_entries = []
@@ -115,7 +115,8 @@ def scan_existing_timetable():
         else:
             all_entries.append({
                 "unit_code": r[0], "day": r[1], "time_slot": r[2],
-                "venue": r[3], "lecturer": r[4], "year_group": r[5]
+                "venue": r[3], "lecturer": r[4], "year_group": r[5],
+                "group_label": r[6]
             })
 
     return scan_entries(all_entries)
@@ -126,6 +127,11 @@ def same_person(a: str, b: str) -> bool:
     def key(name):
         return re.sub(r"^(MR|MRS|MS|DR|PROF)\.?\s*", "", (name or "").strip().upper())
     return bool(key(a)) and key(a) == key(b)
+
+
+def group_of(entry) -> str:
+    """'1.1 (CS)' and '1.1 (FS)' are different student groups in the same year."""
+    return entry.get("group_label") or str(entry["year_group"])
 
 
 def scan_entries(all_entries):
@@ -142,40 +148,44 @@ def scan_entries(all_entries):
             if a["day"] != b["day"] or a["time_slot"] != b["time_slot"]:
                 continue
 
+            # Same room, different units (the same unit in one room is a shared class)
             if (a["venue"] and b["venue"]
                     and a["venue"].upper() not in ONLINE_VENUES
                     and a["venue"].upper() == b["venue"].upper()
-                    and (a["unit_code"], a["year_group"]) != (b["unit_code"], b["year_group"])):
+                    and a["unit_code"] != b["unit_code"]):
                 key = ("VENUE", a["day"], a["time_slot"], a["venue"])
                 if key not in seen:
                     seen.add(key)
                     found.append({
                         "type": "VENUE",
                         "detail": f"{a['venue']} on {a['day']} {a['time_slot']}: "
-                                  f"{a['unit_code']} (Y{a['year_group']}) vs "
-                                  f"{b['unit_code']} (Y{b['year_group']})"
+                                  f"{a['unit_code']} (Y{group_of(a)}) vs "
+                                  f"{b['unit_code']} (Y{group_of(b)})"
                     })
 
+            # Same lecturer in two physical classes at once
             if (same_person(a["lecturer"], b["lecturer"])
-                    and a["unit_code"] != b["unit_code"]):
+                    and a["unit_code"] != b["unit_code"]
+                    and "ONLINE" not in ((a["venue"] or "").upper(), (b["venue"] or "").upper())):
                 key = ("LECTURER", a["day"], a["time_slot"], a["lecturer"])
                 if key not in seen:
                     seen.add(key)
                     found.append({
                         "type": "LECTURER",
                         "detail": f"{a['lecturer']} on {a['day']} {a['time_slot']}: "
-                                  f"{a['unit_code']} (Y{a['year_group']}) and "
-                                  f"{b['unit_code']} (Y{b['year_group']})"
+                                  f"{a['unit_code']} (Y{group_of(a)}) and "
+                                  f"{b['unit_code']} (Y{group_of(b)})"
                     })
 
-            if (a["year_group"] == b["year_group"]
+            # The same group of students booked into two classes at once
+            if (group_of(a) == group_of(b)
                     and a["unit_code"] != b["unit_code"]):
-                key = ("STUDENT", a["day"], a["time_slot"], a["year_group"])
+                key = ("STUDENT", a["day"], a["time_slot"], group_of(a))
                 if key not in seen:
                     seen.add(key)
                     found.append({
                         "type": "STUDENT",
-                        "detail": f"Year {a['year_group']} on {a['day']} {a['time_slot']}: "
+                        "detail": f"Year {group_of(a)} on {a['day']} {a['time_slot']}: "
                                   f"{a['unit_code']} and {b['unit_code']} at the same time"
                     })
 

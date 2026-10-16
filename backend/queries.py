@@ -129,10 +129,17 @@ def answer_timetable(message: str, year: int) -> str:
     def field(r, name, idx):
         return r[name] if hasattr(r, "keys") else r[idx]
 
+    def group(r):
+        return (r["group_label"] if hasattr(r, "keys") and "group_label" in r.keys() else "") or ""
+
+    # Year 1 has two programmes (CS and FS) — label each class so students can tell
+    several_groups = len({group(r) for r in rows}) > 1
+
     lines = [f"📅 Year {year} — " + (f"{day.title()}" if day else "Timetable")]
     for r in rows[:8]:
+        tag = f"[{group(r)}] " if several_groups and group(r) else ""
         lines.append(
-            f"\n{field(r,'unit_code',1)} {field(r,'unit_name',2) or ''}\n"
+            f"\n{tag}{field(r,'unit_code',1)} {field(r,'unit_name',2) or ''}\n"
             f"  {field(r,'day',3).title()} {field(r,'time_slot',4)} → {field(r,'venue',5)}"
             + (f"\n  {field(r,'lecturer',6)}" if field(r, 'lecturer', 6) else "")
         )

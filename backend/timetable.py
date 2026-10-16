@@ -4,15 +4,16 @@ Built for the DKUT CS timetable format:
   - Title row:  "TEACHING TIMETABLE FOR MAY-AUGUST 2026 SEMESTER"
   - Time slots in a header row (7AM-8AM ... 5PM-6PM)
   - Days in column 0 (MONDAY ... FRIDAY)
-  - Year groups in column 1 (e.g. "YEAR 4.1", "CS 4.1")
+  - Groups in column 1 (e.g. "YEAR 4.2", "YEAR 1.1 (CS)", "YEAR 1.1 (FS)")
   - Cells contain "CCS 4101 RCL 1" (unit code + venue)
   - Grid ends at the "TIMETABLE CO-ORDINATOR" signature row
-  - Below the grid: a unit list (code | name | ... | lecturer)
+  - Below the grid: a unit list (code | name | ... | lecturer),
+    sometimes two programmes side by side on one row
 
 Unit names and lecturers are read from that unit list in the file
 itself, so a new semester's timetable works without code changes.
 
-Validated against: CS_MAY-AUG_2026_TEACHING_TIMETABLE_DRAFT_4
+Validated against: CS_MAY-AUG_2026 DRAFT 4 and CS_SEPT-DEC_2026 DRAFT 3
 """
 
 import re
@@ -32,7 +33,9 @@ GRID_END_RE = re.compile(r"CO-?ORDINATOR|^COD\b", re.I)
 SEMESTER_RE = re.compile(r"TIMETABLE\s+FOR\s+(.+?)\s+SEMESTER", re.I)
 
 # Words in the unit list that are not lecturer names
-NOT_A_LECTURER = {"ALL STAFF", "ONLINE", "DONE", "TBA", "TBD"}
+NOT_A_LECTURER = {"ALL STAFF", "ONLINE", "DONE", "TBA", "TBD",
+                  # Departments that teach service units, not people
+                  "IGS", "MPS", "SB", "NURSING", "SAS", "SMA", "SPH", "BEC", "HNS"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -55,11 +58,14 @@ def normalise_venue(text: str) -> str:
     """
     Make the same room always look the same, so conflict detection
     can compare rooms: 'RCL1' -> 'RCL 1', '(RC18)' -> 'RC 18',
-    '- combined with IT' -> 'combined with IT'.
+    '(FS+MATHS) - RC 18' -> 'RC 18', '- VENUE' -> 'TBD'.
     """
-    v = _clean(text).strip("()-– ").upper()
+    v = re.sub(r"\([^)]*\)", " ", _clean(text))     # drop notes like (FS+MATHS)
+    v = _clean(v).strip("()-–: ").upper()
     v = re.sub(r"^([A-Z]+)\s*(\d+)$", r"\1 \2", v)
-    return v or "TBD"
+    if v in ("", "VENUE", "TBA"):
+        return "TBD"
+    return v
 
 
 def normalise_lecturer(text: str) -> str:
@@ -78,6 +84,13 @@ def parse_year_group(label: str):
     """Extract year number from 'YEAR 4.1', 'CS 3.1', 'YR 2'. None otherwise."""
     m = YEAR_LABEL_RE.search(str(label))
     return int(m.group(1)) if m else None
+
+
+def parse_group_label(label: str) -> str:
+    """'YEAR 1.1 (CS)' -> '1.1 (CS)', 'YEAR 4.2' -> '4.2'. Keeps programmes apart."""
+    t = _clean(label).upper()
+    t = re.sub(r"^(YEAR|YR|CS)\s*", "", t)
+    return t
 
 
 def parse_cell(cell_text: str):
@@ -109,44 +122,42 @@ def find_semester_label(df) -> str:
 
 def parse_unit_list(df, start_row: int) -> dict:
     """
-    Read the unit list below the grid. Each row looks like:
+    Read the unit list below the grid. A row may hold one unit:
       '1.' | 'CCS 2103' | 'Operating Systems' | 2 | 3 | 'NAIVASHA'
-    Returns {unit_code: {"unit_name": ..., "lecturer": ...}}.
+    or two programmes side by side:
+      '1.' | 'CCS 1101' | 'Intro to CS' | 3 | 'Mr. Gichohi' | 140 | 'CCS 1102' | 'Intro to Cyber Security' | 3 | 'Dr. Naivasha'
+    Each unit code starts a new unit. Returns {code: {"unit_name", "lecturer"}}.
     """
     units = {}
     for r in range(start_row, len(df)):
         cells = [_clean(v) for v in df.iloc[r].tolist()]
         cells = [c for c in cells if c]
-        if not cells:
-            continue
 
-        # The unit code is in the first or second cell
-        code_idx = next((i for i, c in enumerate(cells[:2])
-                         if normalise_unit_code(c)), None)
-        if code_idx is None:
-            continue
-        code = normalise_unit_code(cells[code_idx])
-        rest = cells[code_idx + 1:]
+        # Split the row into segments, each starting at a cell that is a unit code
+        segments, current = [], None
+        for c in cells:
+            code = normalise_unit_code(c)
+            if code and re.fullmatch(r"[A-Z]{3}\s*\d{4}", c.upper()):
+                current = [code]
+                segments.append(current)
+            elif current is not None:
+                current.append(c)
 
-        # Name = first remaining cell that has letters and is not a number
-        name = next((c for c in rest if re.search(r"[A-Za-z]{3}", c)
-                     and not c.upper().startswith("MOVED")), "")
-
-        # Lecturer = last remaining cell that is a word, not the name,
-        # not a number, not a note like "Moved to Year 1" or "DONE"
-        lecturer = ""
-        for c in reversed(rest):
-            cu = c.upper()
-            if c == name or not re.search(r"[A-Za-z]", c):
-                continue
-            if cu.startswith("MOVED") or cu in {"DONE"} or re.fullmatch(r"\d+\s*HRS?", cu):
-                continue
-            lecturer = normalise_lecturer(c)
-            break
-
-        # First listing of a code wins (later sheets/rows are older notes)
-        units.setdefault(code, {"unit_name": name.title() if name.isupper() else name,
-                                "lecturer": lecturer})
+        for seg in segments:
+            code, rest = seg[0], seg[1:]
+            name = next((c for c in rest if re.search(r"[A-Za-z]{3}", c)
+                         and not c.upper().startswith("MOVED")), "")
+            lecturer = ""
+            for c in reversed(rest):
+                cu = c.upper()
+                if c == name or not re.search(r"[A-Za-z]", c):
+                    continue
+                if cu.startswith("MOVED") or cu == "DONE" or re.fullmatch(r"\d+\s*HRS?", cu):
+                    continue
+                lecturer = normalise_lecturer(c)
+                break
+            units.setdefault(code, {"unit_name": name.title() if name.isupper() else name,
+                                    "lecturer": lecturer})
     return units
 
 
@@ -216,6 +227,7 @@ def parse_timetable_excel(file_path: str, sheet_name=None):
                 "time_slot": slot,
                 "venue": venue,
                 "year_group": year_group,
+                "group_label": parse_group_label(row[1]),
             })
 
     # 3. Unit names and lecturers from the list below the grid
@@ -255,10 +267,10 @@ def save_timetable(parsed: dict, semester: str = "", filename: str = "",
         cur.execute("DELETE FROM timetable")
         for s in sessions:
             cur.execute(_ph("""INSERT INTO timetable
-                (unit_code, unit_name, day, time_slot, venue, lecturer, year_group)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)"""),
+                (unit_code, unit_name, day, time_slot, venue, lecturer, year_group, group_label)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""),
                 (s["unit_code"], s["unit_name"], s["day"], s["time_slot"],
-                 s["venue"], s["lecturer"], s["year_group"]))
+                 s["venue"], s["lecturer"], s["year_group"], s.get("group_label", "")))
 
         cur.execute("DELETE FROM units")
         for code, info in parsed["units"].items():

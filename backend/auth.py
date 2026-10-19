@@ -196,29 +196,63 @@ def complete_registration(phone, student_id, email, year, is_transfer=False):
     logger.info(f"Student registered (year {year}), transfer={is_transfer}")
 
 
-# ─────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 def send_otp_email(to_email: str, otp: str):
-    """Send OTP via Resend API (HTTPS — works on Railway). Returns (success, error)."""
-    api_key = os.getenv("RESEND_API_KEY", "")
+    """Send the OTP over HTTPS (Railway blocks SMTP). Returns (success, error).
+    Uses Brevo if BREVO_API_KEY is set, otherwise Resend, otherwise dev mode."""
+    subject = "UniBot DKUT — Verification Code"
+    body = (f"Your UniBot verification code is:\n\n"
+            f"        {otp}\n\n"
+            f"This code expires in 5 minutes.\n"
+            f"Do not share it with anyone.\n\n"
+            f"— UniBot, Department of Computer Science, DKUT")
 
-    if not api_key:
-        logger.warning(f"DEV MODE — OTP for {to_email}: {otp}")
-        return True, "dev-mode"
+    brevo_key = os.getenv("BREVO_API_KEY", "")
+    sender = os.getenv("EMAIL_ADDRESS", "")
 
-    try:
-        import resend
-        resend.api_key = api_key
-        resend.Emails.send({
-            "from": "UniBot DKUT <onboarding@resend.dev>",
-            "to": [to_email],
-            "subject": "UniBot DKUT — Verification Code",
-            "text": (f"Your UniBot verification code is:\n\n"
-                     f"        {otp}\n\n"
-                     f"This code expires in 5 minutes.\n"
-                     f"Do not share it with anyone.\n\n"
-                     f"— UniBot, Department of Computer Science, DKUT"),
-        })
-        return True, ""
-    except Exception as e:
-        logger.error(f"Resend email failed: {e}")
-        return False, str(e)
+    if brevo_key and sender:
+        import json
+        import urllib.request
+        import urllib.error
+        payload = json.dumps({
+            "sender": {"name": "UniBot DKUT", "email": sender},
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "textContent": body,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=payload, method="POST",
+            headers={"api-key": brevo_key, "Content-Type": "application/json",
+                     "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if resp.status in (200, 201, 202):
+                    return True, ""
+                return False, f"Brevo returned {resp.status}"
+        except urllib.error.HTTPError as e:
+            err = e.read().decode(errors="ignore")[:200]
+            logger.error(f"Brevo email failed: {e.code} {err}")
+            return False, err
+        except Exception as e:
+            logger.error(f"Brevo email failed: {e}")
+            return False, str(e)
+
+    resend_key = os.getenv("RESEND_API_KEY", "")
+    if resend_key:
+        try:
+            import resend
+            resend.api_key = resend_key
+            resend.Emails.send({
+                "from": "UniBot DKUT <onboarding@resend.dev>",
+                "to": [to_email],
+                "subject": subject,
+                "text": body,
+            })
+            return True, ""
+        except Exception as e:
+            logger.error(f"Resend email failed: {e}")
+            return False, str(e)
+
+    logger.warning(f"DEV MODE — OTP for {to_email}: {otp}")
+    return True, "dev-mode"

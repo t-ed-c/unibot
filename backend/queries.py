@@ -93,7 +93,7 @@ def classify_intent(message: str) -> str:
         return "CHANGE_YEAR"
     if re.search(r"\b(fee|fees|balance|pay|paybill|lipa)\b", m):
         return "FEE_QUERY"
-    if re.search(r"\b(deadline|due|assignment|cat|exam|submit)\b", m):
+    if re.search(r"\b(deadlines?|due|assignments?|cats?|exams?|submit|submissions?|homework|projects?|tests?|quiz(zes)?|kazi)\b", m):
         return "DEADLINE_QUERY"
     if re.search(r"\b(class|classes|timetable|lecture|lectures|venue|room|when|where|time|leo|today|tomorrow|kesho|saa|monday|tuesday|wednesday|thursday|friday|saturday)\b", m):
         return "TIMETABLE_QUERY"

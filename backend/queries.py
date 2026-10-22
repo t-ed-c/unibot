@@ -210,25 +210,28 @@ def find_unit_in_message(message_upper: str, year: int):
 
 
 def answer_deadline(message: str, year: int) -> str:
+    """Deadlines for the units this student's year takes."""
+    my_units = {code.replace(" ", "") for code, _ in get_units_for_year(year)}
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(_ph("""SELECT unit_code, title, due_date FROM deadlines
-                       ORDER BY due_date ASC LIMIT 5"""))
+        cur.execute("SELECT unit_code, title, due_date FROM deadlines ORDER BY id DESC")
         rows = cur.fetchall()
-
-    if not rows:
-        return ("📌 No deadlines recorded yet.\n"
-                "Deadlines appear here when your lecturers add them.")
 
     def field(r, name, idx):
         return r[name] if hasattr(r, "keys") else r[idx]
 
-    lines = ["📌 Upcoming deadlines:"]
-    for r in rows:
+    mine = [r for r in rows
+            if (field(r, "unit_code", 0) or "").replace(" ", "") in my_units][:8]
+
+    if not mine:
+        return ("📌 No deadlines recorded for Year {} yet.\n"
+                "They appear here when your lecturers or class rep add them.").format(year)
+
+    lines = [f"📌 Deadlines — Year {year}:"]
+    for r in mine:
         lines.append(f"\n• {field(r,'unit_code',0)} — {field(r,'title',1)}\n"
                      f"  Due: {field(r,'due_date',2)}")
     return "\n".join(lines)
-
 
 def answer_fee() -> str:
     return ("💰 Fee balances are on the student portal:\n"

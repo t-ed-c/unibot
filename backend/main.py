@@ -15,7 +15,7 @@ import logging
 from database import init_db
 from auth import handle_registration_message, is_registered
 from queries import handle_student_query
-from broadcast import handle_sender_command, is_registered_sender
+from broadcast import handle_sender_command, is_registered_sender, record_message_status
 from session import get_session, GLOBAL_COMMANDS, handle_global_command
 from admin import router as admin_router
 
@@ -74,6 +74,17 @@ async def whatsapp_webhook(
     # ── 4. Unregistered → registration flow ──
     reply = handle_registration_message(phone, message)
     return PlainTextResponse(twiml(reply), media_type="application/xml")
+
+
+@app.post("/webhook/status")
+async def message_status(
+    MessageSid: str = Form(""),
+    MessageStatus: str = Form(""),
+):
+    """Twilio reports delivered / read for each broadcast message here."""
+    if MessageSid:
+        record_message_status(MessageSid, MessageStatus)
+    return PlainTextResponse("", status_code=204)
 
 
 def twiml(message: str) -> str:

@@ -7,6 +7,11 @@ per student (Objective ii — timestamped delivery confirmation).
 Sender WhatsApp commands:
   BROADCAST <year|unit> <message>     e.g. BROADCAST 4 Class moved to Lab 3
   DEADLINE <unit> <title> — <date>    e.g. DEADLINE CCS4102 Assignment 2 — Friday 20 July
+
+Admin-only WhatsApp commands (engagement model pauses, e.g. strikes):
+  PAUSE ML [YYYY-MM-DD] <reason>      e.g. PAUSE ML 2026-10-13 lecturers strike
+  RESUME ML                           classes are back — count activity again
+  ML STATUS                           show current and past pauses
 """
 
 import os
@@ -29,6 +34,12 @@ logger = logging.getLogger("unibot.broadcast")
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
+
+# Twilio reports delivered / read back to this URL (WhatsApp read receipts).
+# Railway sets RAILWAY_PUBLIC_DOMAIN automatically.
+_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+STATUS_CALLBACK = os.getenv("STATUS_CALLBACK_URL") or (
+    f"https://{_domain}/webhook/status" if _domain else "")
 
 _twilio_client = None
 if TWILIO_SID and TWILIO_TOKEN:
@@ -78,6 +89,13 @@ def handle_sender_command(phone: str, message: str):
     role = field(sender, "role", 2)
 
     m = message.strip()
+
+    # ── ML pause commands (admins only) ──
+    if re.match(r"^(PAUSE ML|RESUME ML|ML STATUS)\b", m, re.I):
+        if role != "ADMIN":
+            return "⛔ Only an admin can pause or resume the engagement model."
+        from ml_pauses import handle_pause_command
+        return handle_pause_command(m, name)
 
     # ── BROADCAST command ──
     bc = re.match(r"^BROADCAST\s+([A-Z]{3}\s?\d{4}|\S+)\s+(.+)$", m, re.I | re.S)
@@ -155,25 +173,25 @@ def execute_broadcast(sender_phone, sender_name, sender_role, target, body):
             return r[name] if hasattr(r, "keys") else r[idx]
         sid = field(s, "student_id_hash", 0)
         real_phone = decrypt_phone(field(s, "phone_enc", 1))
-        ok = send_whatsapp(real_phone, formatted) if real_phone else False
-        results.append((sid, "DELIVERED" if ok else "FAILED"))
+        ok = send_whatsapp(real_phone, formatted) if real_phone else None
+        results.append((sid, "SENT" if ok else "FAILED", ok if isinstance(ok, str) else None))
         delivered += 1 if ok else 0
         failed += 0 if ok else 1
 
     # Log everything in ONE connection
     with get_db() as conn:
         cur = conn.cursor()
-        for sid, status in results:
+        for sid, status, msg_sid in results:
             cur.execute(_ph("""INSERT INTO delivery_log
-                           (broadcast_id, student_id_hash, sent_at, status)
-                           VALUES (%s, %s, CURRENT_TIMESTAMP, %s)"""),
-                        (broadcast_id, sid, status))
+                           (broadcast_id, student_id_hash, sent_at, status, message_sid)
+                           VALUES (%s, %s, CURRENT_TIMESTAMP, %s, %s)"""),
+                        (broadcast_id, sid, status, msg_sid))
 
-    for sid, _ in results:
+    for sid, _, _ in results:
         log_engagement(sid, "BROADCAST_RECEIVED", f"broadcast:{broadcast_id}")
 
     return (f"✅ Broadcast sent to {target_label}\n"
-            f"Delivered: {delivered}\n"
+            f"Sent: {delivered}\n"
             f"Failed: {failed}\n"
             f"Broadcast ID: {broadcast_id}")
 
@@ -211,20 +229,56 @@ def send_whatsapp_by_hash(phone_hash: str, message: str) -> bool:
     return send_whatsapp(real, message)
 
 
-def send_whatsapp(phone: str, message: str) -> bool:
+def send_whatsapp(phone: str, message: str):
+    """Send one WhatsApp message. Returns Twilio's message ID (truthy) or None."""
     if not _twilio_client:
         logger.info(f"DEV MODE — would send to {phone[-4:]}****:\n{message[:80]}")
-        return True
+        return "DEV"
     try:
-        _twilio_client.messages.create(
+        extra = {"status_callback": STATUS_CALLBACK} if STATUS_CALLBACK else {}
+        msg = _twilio_client.messages.create(
             from_=TWILIO_FROM,
             to=f"whatsapp:{phone}",
-            body=message
+            body=message,
+            **extra
         )
-        return True
+        return msg.sid
     except Exception as e:
         logger.error(f"Twilio send failed: {e}")
-        return False
+        return None
+
+
+def record_message_status(message_sid: str, status: str):
+    """
+    Twilio calls /webhook/status as a broadcast is delivered and then read.
+    The first time a student reads a broadcast it is logged as BROADCAST_READ,
+    which feeds the 'announcements_read' feature of the engagement model.
+    """
+    status = (status or "").lower()
+    if status not in ("delivered", "read", "failed", "undelivered"):
+        return
+    new = {"delivered": "DELIVERED", "read": "READ"}.get(status, "FAILED")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_ph("""SELECT broadcast_id, student_id_hash, status FROM delivery_log
+                       WHERE message_sid = %s"""), (message_sid,))
+        row = cur.fetchone()
+        if not row:
+            return
+        bid = row["broadcast_id"] if hasattr(row, "keys") else row[0]
+        sid = row["student_id_hash"] if hasattr(row, "keys") else row[1]
+        old = row["status"] if hasattr(row, "keys") else row[2]
+        if old == "READ" or (old == "DELIVERED" and new == "FAILED"):
+            return                      # never move backwards
+        if new == "DELIVERED":
+            cur.execute(_ph("""UPDATE delivery_log SET status = %s,
+                           delivered_at = CURRENT_TIMESTAMP WHERE message_sid = %s"""),
+                        (new, message_sid))
+        else:
+            cur.execute(_ph("UPDATE delivery_log SET status = %s WHERE message_sid = %s"),
+                        (new, message_sid))
+    if new == "READ":
+        log_engagement(sid, "BROADCAST_READ", f"broadcast:{bid}")
 
 
 # ─────────────────────────────────────────────────────────────

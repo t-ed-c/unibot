@@ -247,8 +247,26 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # ── ML pause periods (strikes, holidays) — left out of engagement scoring ──
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS ml_pauses (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at  TIMESTAMP NOT NULL,
+            ended_at    TIMESTAMP,
+            reason      TEXT,
+            started_by  TEXT
+        )""" if not USE_POSTGRES else """
+        CREATE TABLE IF NOT EXISTS ml_pauses (
+            id          SERIAL PRIMARY KEY,
+            started_at  TIMESTAMP NOT NULL,
+            ended_at    TIMESTAMP,
+            reason      TEXT,
+            started_by  TEXT
+        )""")
+
         # ── Upgrades for databases created before a column existed ──
     add_column_if_missing("timetable", "group_label", "TEXT")
+    add_column_if_missing("delivery_log", "message_sid", "TEXT")
 
     logger.info("All tables created/verified")
 

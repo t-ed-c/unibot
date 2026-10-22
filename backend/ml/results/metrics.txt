@@ -1,0 +1,58 @@
+UniBot — Engagement model on Kaggle xAPI-Edu-Data
+====================================================
+Students: 480   At risk (Class L): 127 (26%)
+Features: questions_asked, resources_checked, announcements_read, peer_activity, long_absence
+
+Train: 336 students   Test (never seen in training): 144
+
+Results on the TEST set
+----------------------------------------------------
+Model                                Acc   Prec    Rec     F1    AUC
+Isolation Forest (unsupervised)    0.549  0.279  0.447  0.343  0.506
+Logistic Regression (supervised)   0.944  0.875  0.921  0.897  0.982
+Random Forest (supervised)         0.931  0.912  0.816  0.861  0.979
+Rule baseline (absent >7 days AND  0.903  0.900  0.711  0.794    -  
+
+Acc = accuracy, Prec = of students flagged, how many were really at risk,
+Rec = of at-risk students, how many were caught, F1 = balance of the two,
+AUC = how well the model ranks at-risk students above engaged ones (0.5 = guessing).
+
+Overfitting check
+----------------------------------------------------
+Logistic Regression  train F1 0.834 | test F1 0.897 | 5-fold CV F1 0.839 ± 0.047
+Random Forest        train F1 0.883 | test F1 0.861 | 5-fold CV F1 0.853 ± 0.057
+A small gap between train and test F1 means the model is not just memorising.
+
+What predicts disengagement (Random Forest importance)
+----------------------------------------------------
+  long_absence         0.317
+  resources_checked    0.313
+  questions_asked      0.173
+  announcements_read   0.162
+  peer_activity        0.036
+
+Detailed report — Random Forest
+----------------------------------------------------
+              precision    recall  f1-score   support
+
+     Engaged       0.94      0.97      0.95       106
+     At risk       0.91      0.82      0.86        38
+
+    accuracy                           0.93       144
+   macro avg       0.92      0.89      0.91       144
+weighted avg       0.93      0.93      0.93       144
+
+Confusion matrices saved:
+  ml\results\confusion_matrix_isolation.png
+  ml\results\confusion_matrix_logistic.png
+  ml\results\confusion_matrix_random.png
+  ml\results\confusion_matrix_rule.png
+
+Weights (Logistic Regression, all 480 students) — positive = more likely at risk
+----------------------------------------------------
+  long_absence         +1.52
+  peer_activity        -0.41
+  questions_asked      -0.77
+  announcements_read   -0.81
+  resources_checked    -1.11
+Live model saved to ml/engagement_lr.joblib

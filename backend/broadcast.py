@@ -321,6 +321,13 @@ def check_due_date(due: str, today=None):
     elif nm:
         day, month = int(nm.group(1)), int(nm.group(2))
     else:
+        # A day number with no readable month ("Friday 24 Oc") is a typo, not free text.
+        # Times (2PM, 10:30) and rooms (LH2, RC 18) don't count as day numbers.
+        rest = re.sub(r"\b\d{1,2}(:\d{2})?\s*(AM|PM)\b|\b\d{1,2}:\d{2}\b", " ", u)
+        rest = re.sub(r"\b(LH|RC|RCL|LAB|LT|ROOM|CR|WEEK|WK|LESSON|CHAPTER|CH|Q|QUESTION|PAGE|PG)\s*\d+\b", " ", rest)
+        if re.search(r"\b([1-9]|[12]\d|3[01])(ST|ND|RD|TH)?\b", rest):
+            return ("⚠️ I couldn't read the date in \"" + due.strip() + "\".\n"
+                    "Nothing was sent. Write it like: Fri 30 Oct (or 30/10), then send the DEADLINE again.")
         return None
     ym = re.search(r"\b(20\d\d)\b", u)
     year = int(ym.group(1)) if ym else today.year

@@ -6,7 +6,7 @@ per student (Objective ii — timestamped delivery confirmation).
 
 Sender WhatsApp commands:
   BROADCAST <year|unit> <message>     e.g. BROADCAST 4 Class moved to Lab 3
-  DEADLINE <unit> <title> — <date>    e.g. DEADLINE CCS4102 Assignment 2 — Friday 20 July
+  DEADLINE <unit> <title> — <date>    e.g. DEADLINE CCS4102 Assignment 2 — Friday 30 Oct
 
 Admin-only WhatsApp commands (engagement model pauses, e.g. strikes):
   PAUSE ML [YYYY-MM-DD] <reason>      e.g. PAUSE ML 2026-10-13 lecturers strike
@@ -282,12 +282,60 @@ def record_message_status(message_sid: str, status: str):
 
 
 # ─────────────────────────────────────────────────────────────
+_WEEKDAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+_MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+
+def check_due_date(due: str, today=None):
+    """
+    Catch typos before a deadline goes out to a whole class.
+    'Friday 24 Oct' when 24 Oct is a Saturday -> error message.
+    A date that has already passed -> error message.
+    Free text with no date ('next week') is allowed. Returns None if fine.
+    """
+    today = today or now_kenya().date()
+    u = due.upper()
+    dm = (re.search(r"\b(\d{1,2})(?:ST|ND|RD|TH)?\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\b", u)
+          or re.search(r"\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s+(\d{1,2})(?:ST|ND|RD|TH)?\b", u))
+    nm = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", u)   # 24/10 or 24/10/2026 (day first)
+    if dm:
+        a, b = dm.group(1), dm.group(2)
+        day, month = (int(a), _MONTHS.index(b) + 1) if a.isdigit() else (int(b), _MONTHS.index(a) + 1)
+    elif nm:
+        day, month = int(nm.group(1)), int(nm.group(2))
+    else:
+        return None
+    ym = re.search(r"\b(20\d\d)\b", u)
+    year = int(ym.group(1)) if ym else today.year
+    try:
+        when = datetime(year, month, day).date()
+    except ValueError:
+        return f"⚠️ {day}/{month} is not a real date. Check it and send the DEADLINE again."
+    if not ym and (today - when).days > 180:      # e.g. "5 Jan" sent in November
+        when = when.replace(year=year + 1)
+
+    wd = re.search(r"\b(MON|TUE|WED|THU|FRI|SAT|SUN)(?:DAY|SDAY|NESDAY|RSDAY|URDAY|S|R|RS)?\b", u)
+    if wd:
+        said = next(d for d in _WEEKDAYS if d.startswith(wd.group(1)))
+        real = _WEEKDAYS[when.weekday()]
+        if said != real:
+            return (f"⚠️ {when.day} {when:%b %Y} is a {real.title()}, not a {said.title()}.\n"
+                    f"Nothing was sent. Check the date and send the DEADLINE again.")
+    if when < today:
+        return (f"⚠️ {when:%a} {when.day} {when:%b %Y} has already passed.\n"
+                f"Nothing was sent. Check the date and send the DEADLINE again.")
+    return None
+
+
 def add_deadline(sender_phone, sender_name, sender_role, unit, title, due):
     """Save a deadline, then announce it to every year that takes the unit."""
     code = normalise_unit_code(unit)
     if not code or not years_taking_unit(code):
         return (f"⚠️ {unit} is not on the current timetable, so the deadline was not saved.\n"
-                f"Format: DEADLINE CCS4102 Assignment 2 — Friday 24 Oct")
+                f"Format: DEADLINE CCS4102 Assignment 2 — Friday 30 Oct")
+    problem = check_due_date(due)
+    if problem:
+        return problem
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(_ph("""INSERT INTO deadlines (unit_code, title, due_date, created_by)

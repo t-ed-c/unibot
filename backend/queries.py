@@ -93,7 +93,7 @@ def classify_intent(message: str) -> str:
         return "CHANGE_YEAR"
     if re.search(r"\b(fee|fees|balance|pay|paybill|lipa)\b", m):
         return "FEE_QUERY"
-    if re.search(r"\b(deadlines?|due|assignments?|cats?|exams?|submit|submissions?|homework|projects?|tests?|quiz(zes)?|kazi)\b", m):
+    if re.search(r"\b(deadlines?|due|assignments?|cats?|exams?|submit|submissions?|homework|projects?|tests?|quiz(zes)?|kazi|supps?|mtihani|papers?)\b", m):
         return "DEADLINE_QUERY"
     if re.search(r"\b(class|classes|timetable|lecture|lectures|venue|room|when|where|time|leo|today|tomorrow|kesho|saa|monday|tuesday|wednesday|thursday|friday|saturday)\b", m):
         return "TIMETABLE_QUERY"
@@ -209,24 +209,40 @@ def find_unit_in_message(message_upper: str, year: int):
     return None
 
 
-EXAM_WORDS = re.compile(r"\b(exams?|cats?|tests?|quiz(zes)?|midterms?|finals?|mtihani)\b", re.I)
+EXAM_WORDS = re.compile(r"\b(exams?|cats?|tests?|quiz(zes)?|midterms?|finals?|mtihani|supps?|papers?)\b", re.I)
 
 
 def answer_deadline(message: str, year: int) -> str:
     """
     Deadlines for the units this student's year takes.
-    'When is ML exam?'  -> only Machine Learning items that look like exams/CATs.
-    'Any assignments?'  -> everything for the year.
+    'When is ML exam?'  -> the Machine Learning paper from the exam timetable,
+                           plus any ML CATs a lecturer or rep has announced.
+    'My exams'          -> this year's upcoming papers in date order.
+    'Any assignments?'  -> everything announced for the year.
     """
     m = message.upper()
     units = get_units_for_year(year)
     my_units = {code.replace(" ", ""): name for code, name in units}
+    wants_exam = bool(EXAM_WORDS.search(message))
+
+    exam_rows, exam_info = [], None
+    if wants_exam:
+        from exam_timetable import exams_for_year, get_exam_info
+        exam_rows = exams_for_year(year, include_supp=bool(re.search(r"\bSUPP", m)))
+        exam_info = get_exam_info()
+        # Exam papers can be for units not on this semester's teaching timetable
+        for e in exam_rows:
+            my_units.setdefault(e["unit_code"].replace(" ", ""), e["unit_name"])
 
     # Did they ask about one unit? ("CCS 4102", "ML", "machine learning")
     code_match = re.search(r"\b([A-Z]{3})\s*(\d{4})\b", m)
     unit = (f"{code_match.group(1)} {code_match.group(2)}" if code_match
             else find_unit_in_message(m, year))
-    wants_exam = bool(EXAM_WORDS.search(message))
+    if not unit and exam_rows:
+        for alias, code in unit_aliases([(e["unit_code"], e["unit_name"]) for e in exam_rows]):
+            if re.search(rf"\b{re.escape(alias)}\b", m):
+                unit = code
+                break
 
     with get_db() as conn:
         cur = conn.cursor()
@@ -242,29 +258,76 @@ def answer_deadline(message: str, year: int) -> str:
     items = [r for r in rows if code_of(r) in my_units]
     if unit:
         items = [r for r in items if code_of(r) == unit.replace(" ", "")]
+        exam_rows = [e for e in exam_rows if e["unit_code"].replace(" ", "") == unit.replace(" ", "")]
     if wants_exam:
         items = [r for r in items if EXAM_WORDS.search(field(r, "title", 1) or "")]
     items = items[:8]
 
-    # Say exactly what was searched for, so "nothing found" is clear
     unit_label = ""
     if unit:
         name = my_units.get(unit.replace(" ", ""), "")
         unit_label = f"{unit} {name}".strip() if name else unit
-    what = "exams or CATs" if wants_exam else "deadlines"
+
+    if wants_exam:
+        return _answer_exams(m, year, unit, unit_label, exam_rows, exam_info, items, field)
 
     if not items:
         scope = f" for {unit_label}" if unit_label else f" for Year {year}"
-        return (f"📌 No {what} recorded{scope} yet.\n"
+        return (f"📌 No deadlines recorded{scope} yet.\n"
                 "They appear here as soon as your lecturer or class rep adds them, "
                 "and you'll get a message when they do.")
 
-    title = ("📝 Exams & CATs" if wants_exam else "📌 Deadlines") + \
-            (f" — {unit_label}" if unit_label else f" — Year {year}")
-    lines = [title + ":"]
+    lines = [f"📌 Deadlines — {unit_label or f'Year {year}'}:"]
     for r in items:
         lines.append(f"\n• {field(r,'unit_code',0)} — {field(r,'title',1)}\n"
                      f"  Due: {field(r,'due_date',2)}")
+    return "\n".join(lines)
+
+
+def _answer_exams(m, year, unit, unit_label, exam_rows, exam_info, cats, field):
+    """Exam papers (from the exam timetable) + CATs (announced by lecturers/reps)."""
+    from exam_timetable import describe
+    today = datetime.now(EAT).date().isoformat()
+    upcoming = [e for e in exam_rows if e["exam_date"] >= today]
+    first_only = bool(re.search(r"\b(FIRST|NEXT)\b", m))
+
+    if unit:
+        papers = exam_rows                       # one unit: show it even if already sat
+    else:
+        papers = upcoming[:1] if first_only else upcoming[:10]
+
+    lines = []
+    if papers:
+        lines.append(f"📝 {'Next exam' if first_only and not unit else 'Exams'} — "
+                     f"{unit_label or f'Year {year}'}:")
+        for e in papers:
+            done = " ✅ done" if e["exam_date"] < today else ""
+            supp = " (supp)" if e["kind"] == "SUPP" else ""
+            lines.append(f"\n• {e['unit_code']} {e['unit_name']}{supp}{done}\n  {describe(e)}")
+    if cats:
+        lines.append("\n📌 CATs & tests announced:" if papers else
+                     f"📌 CATs & tests — {unit_label or f'Year {year}'}:")
+        for r in cats:
+            lines.append(f"\n• {field(r,'unit_code',0)} — {field(r,'title',1)}\n"
+                         f"  Due: {field(r,'due_date',2)}")
+
+    if not lines:
+        scope = unit_label or f"Year {year}"
+        if exam_info and exam_rows == [] and unit:
+            msg = f"📝 {scope} is not on the current exam timetable ({exam_info['label']})."
+        elif exam_info and not upcoming:
+            msg = (f"📝 No upcoming exams for {scope} on the current exam timetable "
+                   f"({exam_info['label']}).")
+        else:
+            msg = f"📝 No exams or CATs recorded for {scope} yet."
+        return (msg + "\nCATs appear here when your lecturer or class rep announces them, "
+                "and exams when the exam timetable is published.")
+
+    if exam_info and papers:
+        when = str(exam_info["uploaded_at"])[:10]
+        lines.append(f"\n_{exam_info['label']} · updated {when}_")
+        if exam_info.get("official_link"):
+            lines.append(f"Confirm on the official timetable: {exam_info['official_link']}")
     return "\n".join(lines)
 
 

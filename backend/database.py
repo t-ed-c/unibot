@@ -264,6 +264,52 @@ def init_db():
             started_by  TEXT
         )""")
 
+        # ── Exam timetable (unit, date, time, venue only — no invigilators) ──
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS exams (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind        TEXT NOT NULL DEFAULT 'MAIN',
+            exam_date   TEXT NOT NULL,
+            day         TEXT,
+            year_group  INTEGER NOT NULL,
+            unit_code   TEXT NOT NULL,
+            unit_name   TEXT,
+            time_slot   TEXT,
+            venue       TEXT
+        )""" if not USE_POSTGRES else """
+        CREATE TABLE IF NOT EXISTS exams (
+            id          SERIAL PRIMARY KEY,
+            kind        TEXT NOT NULL DEFAULT 'MAIN',
+            exam_date   TEXT NOT NULL,
+            day         TEXT,
+            year_group  INTEGER NOT NULL,
+            unit_code   TEXT NOT NULL,
+            unit_name   TEXT,
+            time_slot   TEXT,
+            venue       TEXT
+        )""")
+
+        # ── Exam timetable versions (one row per published file) ──
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS exam_uploads (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            label         TEXT NOT NULL,
+            filename      TEXT,
+            official_link TEXT,
+            exams         INTEGER,
+            uploaded_by   TEXT,
+            uploaded_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""" if not USE_POSTGRES else """
+        CREATE TABLE IF NOT EXISTS exam_uploads (
+            id            SERIAL PRIMARY KEY,
+            label         TEXT NOT NULL,
+            filename      TEXT,
+            official_link TEXT,
+            exams         INTEGER,
+            uploaded_by   TEXT,
+            uploaded_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
         # ── Upgrades for databases created before a column existed ──
     add_column_if_missing("timetable", "group_label", "TEXT")
     add_column_if_missing("delivery_log", "message_sid", "TEXT")

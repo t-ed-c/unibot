@@ -209,9 +209,25 @@ def find_unit_in_message(message_upper: str, year: int):
     return None
 
 
+EXAM_WORDS = re.compile(r"\b(exams?|cats?|tests?|quiz(zes)?|midterms?|finals?|mtihani)\b", re.I)
+
+
 def answer_deadline(message: str, year: int) -> str:
-    """Deadlines for the units this student's year takes."""
-    my_units = {code.replace(" ", "") for code, _ in get_units_for_year(year)}
+    """
+    Deadlines for the units this student's year takes.
+    'When is ML exam?'  -> only Machine Learning items that look like exams/CATs.
+    'Any assignments?'  -> everything for the year.
+    """
+    m = message.upper()
+    units = get_units_for_year(year)
+    my_units = {code.replace(" ", ""): name for code, name in units}
+
+    # Did they ask about one unit? ("CCS 4102", "ML", "machine learning")
+    code_match = re.search(r"\b([A-Z]{3})\s*(\d{4})\b", m)
+    unit = (f"{code_match.group(1)} {code_match.group(2)}" if code_match
+            else find_unit_in_message(m, year))
+    wants_exam = bool(EXAM_WORDS.search(message))
+
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT unit_code, title, due_date FROM deadlines ORDER BY id DESC")
@@ -220,18 +236,37 @@ def answer_deadline(message: str, year: int) -> str:
     def field(r, name, idx):
         return r[name] if hasattr(r, "keys") else r[idx]
 
-    mine = [r for r in rows
-            if (field(r, "unit_code", 0) or "").replace(" ", "") in my_units][:8]
+    def code_of(r):
+        return (field(r, "unit_code", 0) or "").replace(" ", "")
 
-    if not mine:
-        return ("📌 No deadlines recorded for Year {} yet.\n"
-                "They appear here when your lecturers or class rep add them.").format(year)
+    items = [r for r in rows if code_of(r) in my_units]
+    if unit:
+        items = [r for r in items if code_of(r) == unit.replace(" ", "")]
+    if wants_exam:
+        items = [r for r in items if EXAM_WORDS.search(field(r, "title", 1) or "")]
+    items = items[:8]
 
-    lines = [f"📌 Deadlines — Year {year}:"]
-    for r in mine:
+    # Say exactly what was searched for, so "nothing found" is clear
+    unit_label = ""
+    if unit:
+        name = my_units.get(unit.replace(" ", ""), "")
+        unit_label = f"{unit} {name}".strip() if name else unit
+    what = "exams or CATs" if wants_exam else "deadlines"
+
+    if not items:
+        scope = f" for {unit_label}" if unit_label else f" for Year {year}"
+        return (f"📌 No {what} recorded{scope} yet.\n"
+                "They appear here as soon as your lecturer or class rep adds them, "
+                "and you'll get a message when they do.")
+
+    title = ("📝 Exams & CATs" if wants_exam else "📌 Deadlines") + \
+            (f" — {unit_label}" if unit_label else f" — Year {year}")
+    lines = [title + ":"]
+    for r in items:
         lines.append(f"\n• {field(r,'unit_code',0)} — {field(r,'title',1)}\n"
                      f"  Due: {field(r,'due_date',2)}")
     return "\n".join(lines)
+
 
 def answer_fee() -> str:
     return ("💰 Fee balances are on the student portal:\n"

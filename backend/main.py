@@ -19,6 +19,7 @@ from broadcast import handle_sender_command, is_registered_sender, record_messag
 from session import get_session, GLOBAL_COMMANDS, handle_global_command
 from admin import router as admin_router
 from admin_exams import router as admin_exams_router
+from staff import handle_staff_message, sender_help
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("unibot")
@@ -62,18 +63,25 @@ async def whatsapp_webhook(
         reply = handle_global_command(phone, message.upper())
         return PlainTextResponse(twiml(reply), media_type="application/xml")
 
-    # ── 2. Registered senders (lecturers / class reps) ──
+    # ── 2. Staff and class rep sign-up (STAFF / REP and their follow-up steps) ──
+    reply = handle_staff_message(phone, message)
+    if reply:
+        return PlainTextResponse(twiml(reply), media_type="application/xml")
+
+    # ── 3. Registered senders (lecturers / class reps / admins) ──
     if is_registered_sender(phone):
         reply = handle_sender_command(phone, message)
         if reply:  # sender command was handled
             return PlainTextResponse(twiml(reply), media_type="application/xml")
+        if not is_registered(phone):  # lecturers aren't students: show their commands
+            return PlainTextResponse(twiml(sender_help(phone)), media_type="application/xml")
 
-    # ── 3. Registered students → answer their query ──
+    # ── 4. Registered students → answer their query ──
     if is_registered(phone):
         reply = handle_student_query(phone, message)
         return PlainTextResponse(twiml(reply), media_type="application/xml")
 
-    # ── 4. Unregistered → registration flow ──
+    # ── 5. Unregistered → registration flow ──
     reply = handle_registration_message(phone, message)
     return PlainTextResponse(twiml(reply), media_type="application/xml")
 

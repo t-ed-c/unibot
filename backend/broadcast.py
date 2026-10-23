@@ -87,8 +87,17 @@ def handle_sender_command(phone: str, message: str):
 
     name = field(sender, "name", 1)
     role = field(sender, "role", 2)
+    sender_year = field(sender, "year_group", 4)
 
     m = message.strip()
+
+    from staff import handle_staff_command, remember_sender_phone, rep_may_target
+    remember_sender_phone(phone)
+
+    # ── Lecturer / admin commands: REQUESTS, APPROVE, REJECT, SENDERS, REMOVE SENDER ──
+    staff_reply = handle_staff_command(phone, name, role, m)
+    if staff_reply:
+        return staff_reply
 
     # ── ML pause commands (admins only) ──
     if re.match(r"^(PAUSE ML|RESUME ML|ML STATUS)\b", m, re.I):
@@ -101,12 +110,20 @@ def handle_sender_command(phone: str, message: str):
     bc = re.match(r"^BROADCAST\s+([A-Z]{3}\s?\d{4}|\S+)\s+(.+)$", m, re.I | re.S)
     if bc:
         target, body = bc.group(1), bc.group(2).strip()
+        if role == "CLASS_REP":
+            refused = rep_may_target(sender_year, target, _years_for)
+            if refused:
+                return refused
         return execute_broadcast(phone, name, role, target, body)
 
     # ── DEADLINE command ──
     dl = re.match(r"^DEADLINE\s+([A-Z]{3}\s?\d{4}|\S+)\s+(.+?)\s*[—-]\s*(.+)$", m, re.I | re.S)
     if dl:
         unit, title, due = dl.group(1).upper(), dl.group(2).strip(), dl.group(3).strip()
+        if role == "CLASS_REP":
+            refused = rep_may_target(sender_year, unit, _years_for)
+            if refused:
+                return refused
         return add_deadline(phone, name, role, unit, title, due)
 
     # Not a sender command → None means fall through
@@ -343,6 +360,11 @@ def add_deadline(sender_phone, sender_name, sender_role, unit, title, due):
                     (code, title, due, sender_name))
     body = f"📌 New deadline:\n{code} — {title}\nDue: {due}"
     return execute_broadcast(sender_phone, sender_name, sender_role, code, body)
+
+
+def _years_for(target: str):
+    unit = normalise_unit_code(target)
+    return years_taking_unit(unit) if unit else []
 
 
 def years_taking_unit(unit_code: str):

@@ -310,9 +310,36 @@ def init_db():
             uploaded_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
+        # ── Class rep requests (a lecturer or admin approves them) ──
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS sender_requests (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone_hash   TEXT NOT NULL,
+            phone_enc    TEXT,
+            name         TEXT NOT NULL,
+            year_group   INTEGER,
+            status       TEXT DEFAULT 'PENDING',
+            decided_by   TEXT,
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            decided_at   TIMESTAMP
+        )""" if not USE_POSTGRES else """
+        CREATE TABLE IF NOT EXISTS sender_requests (
+            id           SERIAL PRIMARY KEY,
+            phone_hash   TEXT NOT NULL,
+            phone_enc    TEXT,
+            name         TEXT NOT NULL,
+            year_group   INTEGER,
+            status       TEXT DEFAULT 'PENDING',
+            decided_by   TEXT,
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            decided_at   TIMESTAMP
+        )""")
+
         # ── Upgrades for databases created before a column existed ──
     add_column_if_missing("timetable", "group_label", "TEXT")
     add_column_if_missing("delivery_log", "message_sid", "TEXT")
+    add_column_if_missing("senders", "phone_enc", "TEXT")   # so senders can get notices
+    add_column_if_missing("senders", "email", "TEXT")       # staff email used to verify
 
     logger.info("All tables created/verified")
 

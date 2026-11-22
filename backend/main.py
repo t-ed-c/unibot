@@ -58,17 +58,23 @@ async def whatsapp_webhook(
 
     logger.info(f"Incoming message from {phone[-4:]}****: {message[:50]}")
 
-    # ── 1. Global commands work anywhere, anytime ──
+    # ── 1. Help for lecturers, class reps and admins: their own commands ──
+    if message.upper() in ("HELP", "SUPPORT", "MENU", "COMMANDS") and is_registered_sender(phone):
+        reply = sender_help(phone)
+        if reply:
+            return PlainTextResponse(twiml(reply), media_type="application/xml")
+
+    # ── 2. Global commands work anywhere, anytime ──
     if message.upper() in GLOBAL_COMMANDS:
         reply = handle_global_command(phone, message.upper())
         return PlainTextResponse(twiml(reply), media_type="application/xml")
 
-    # ── 2. Staff and class rep sign-up (STAFF / REP and their follow-up steps) ──
+    # ── 3. Staff and class rep sign-up (STAFF / REP and their follow-up steps) ──
     reply = handle_staff_message(phone, message)
     if reply:
         return PlainTextResponse(twiml(reply), media_type="application/xml")
 
-    # ── 3. Registered senders (lecturers / class reps / admins) ──
+    # ── 4. Registered senders (lecturers / class reps / admins) ──
     if is_registered_sender(phone):
         reply = handle_sender_command(phone, message)
         if reply:  # sender command was handled
@@ -76,12 +82,12 @@ async def whatsapp_webhook(
         if not is_registered(phone):  # lecturers aren't students: show their commands
             return PlainTextResponse(twiml(sender_help(phone)), media_type="application/xml")
 
-    # ── 4. Registered students → answer their query ──
+    # ── 5. Registered students → answer their query ──
     if is_registered(phone):
         reply = handle_student_query(phone, message)
         return PlainTextResponse(twiml(reply), media_type="application/xml")
 
-    # ── 5. Unregistered → registration flow ──
+    # ── 6. Unregistered → registration flow ──
     reply = handle_registration_message(phone, message)
     return PlainTextResponse(twiml(reply), media_type="application/xml")
 

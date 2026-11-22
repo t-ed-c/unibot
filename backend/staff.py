@@ -38,21 +38,63 @@ STAFF_EMAIL_DOMAIN = os.getenv("STAFF_EMAIL_DOMAIN", "dkut.ac.ke").lower().strip
 MAX_OTP_ATTEMPTS = 3
 
 COMMANDS_HELP = {
-    "LECTURER": ("You can send:\n"
-                 "• BROADCAST 4 <message> — to a whole year\n"
-                 "• BROADCAST CCS4204 <message> — to everyone taking a unit\n"
-                 "• DEADLINE CCS4204 CAT 1 — Fri 6 Nov\n"
-                 "• REQUESTS — class rep requests to approve\n"
-                 "• SENDERS — who can broadcast"),
-    "CLASS_REP": ("You can send:\n"
-                  "• BROADCAST {year} <message> — to your class\n"
-                  "• DEADLINE CCS4204 Assignment 1 — Fri 30 Oct"),
-    "ADMIN": ("You can send:\n"
-              "• BROADCAST / DEADLINE (any year)\n"
-              "• REQUESTS · APPROVE <n> · REJECT <n>\n"
-              "• SENDERS · REMOVE SENDER <n>\n"
-              "• PAUSE ML / RESUME ML / ML STATUS"),
+    "LECTURER": (
+        "📢 SEND A MESSAGE\n"
+        "• BROADCAST <year> <message> — to a whole year\n"
+        "   e.g. BROADCAST 4 CCS 4204 class moved to Lab 3\n"
+        "• BROADCAST <unit> <message> — to every year taking the unit\n"
+        "   e.g. BROADCAST CCS4204 CAT 1 will be in RCL 1\n\n"
+        "📌 POST A DEADLINE\n"
+        "• DEADLINE <unit> <title> — <date>\n"
+        "   e.g. DEADLINE CCS4204 Assignment 2 — {eg_date}\n"
+        "   The date is checked before anything is sent.\n\n"
+        "👥 CLASS REPS\n"
+        "• REQUESTS — reps waiting for approval\n"
+        "• APPROVE 7 / REJECT 7 — answer request no. 7\n"
+        "• SENDERS — everyone who can broadcast\n"
+        "• REMOVE SENDER 3 — remove a class rep\n\n"
+        "Students get your message privately, tagged 🔵 OFFICIAL with your name. "
+        "You get back how many were sent and failed."),
+    "CLASS_REP": (
+        "📢 SEND A MESSAGE TO YOUR CLASS\n"
+        "• BROADCAST {year} <message>\n"
+        "   e.g. BROADCAST {year} Class photo at 2pm, main gate\n\n"
+        "📌 POST A DEADLINE\n"
+        "• DEADLINE <unit> <title> — <date>\n"
+        "   e.g. DEADLINE CCS4204 Assignment 2 — {eg_date}\n"
+        "   The date is checked before anything is sent.\n\n"
+        "You can only send to Year {year}. Your messages are tagged 🟡 CLASS REP.\n"
+        "You can still ask questions as a student, e.g. \"what classes do I have Monday?\""),
+    "ADMIN": (
+        "📢 BROADCAST <year or unit> <message> — any year\n"
+        "📌 DEADLINE <unit> <title> — <date>\n"
+        "   e.g. DEADLINE CCS4204 Assignment 2 — {eg_date}\n\n"
+        "👥 SENDERS\n"
+        "• REQUESTS · APPROVE <n> · REJECT <n>\n"
+        "• SENDERS · REMOVE SENDER <n> (anyone)\n\n"
+        "⏸️ ENGAGEMENT MODEL (strikes, holidays)\n"
+        "• PAUSE ML 2026-10-13 lecturers strike\n"
+        "• RESUME ML\n"
+        "• ML STATUS\n\n"
+        "🗓️ Timetable and exam uploads are on the web pages /admin and /admin/exams."),
 }
+
+ROLE_LABEL = {"LECTURER": "Lecturer", "CLASS_REP": "Class rep", "ADMIN": "Admin"}
+
+
+def _example_date() -> str:
+    """Next Friday at least 3 days away, e.g. 'Fri 4 Dec', so help examples never show a past date."""
+    from datetime import datetime, timedelta, timezone
+    today = datetime.now(timezone(timedelta(hours=3))).date()
+    d = today + timedelta(days=3)
+    while d.weekday() != 4:
+        d += timedelta(days=1)
+    return f"Fri {d.day} {d.strftime('%b')}"
+
+
+def commands_help(role: str, year=None) -> str:
+    text = COMMANDS_HELP.get(role, "")
+    return text.format(year=year or "<year>", eg_date=_example_date())
 
 
 def _f(r, name, idx):
@@ -111,12 +153,17 @@ def remember_sender_phone(phone: str):
 
 
 def sender_help(phone: str) -> str:
+    """The help a lecturer, class rep or admin gets for HELP, MENU or COMMANDS."""
     row = get_sender_row(phone)
     if not row:
         return ""
     role, year = _f(row, "role", 1), _f(row, "year_group", 2)
-    return (f"👋 Hi {_f(row, 'name', 0)}.\n\n"
-            + COMMANDS_HELP.get(role, "").format(year=year or "<year>"))
+    label = ROLE_LABEL.get(role, role)
+    if role == "CLASS_REP" and year:
+        label += f", Year {year}"
+    return (f"👋 Hi {_f(row, 'name', 0)} ({label}). Here's what you can send:\n\n"
+            + commands_help(role, year)
+            + "\n\nHELP — this list · CANCEL — stop the current step")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -194,7 +241,7 @@ def handle_staff_message(phone: str, message: str):
         for admin_name, _, admin_phone in _senders_with_roles({"ADMIN"}):
             _send(admin_phone, f"👩‍🏫 New lecturer joined UniBot: {name} ({session['email']}).\n"
                                "Send SENDERS to see everyone, or REMOVE SENDER <n> to undo.")
-        return f"✅ You're set up, {name}.\n\n" + COMMANDS_HELP["LECTURER"]
+        return f"✅ You're set up, {name}.\n\n" + commands_help("LECTURER")
 
     if state == "REP_NAME":
         name = _clean_name(text)
@@ -281,7 +328,7 @@ def handle_staff_command(phone: str, name: str, role: str, message: str):
             if rep_phone:
                 _send(rep_phone, f"✅ You're now the Year {year} class rep on UniBot "
                                  f"(approved by {name}).\n\n"
-                                 + COMMANDS_HELP["CLASS_REP"].format(year=year))
+                                 + commands_help("CLASS_REP", year))
             logger.info(f"Class rep approved: {rep_name} (Y{year}) by {name}")
             return f"✅ {rep_name} is now a Year {year} class rep."
         if rep_phone:

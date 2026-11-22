@@ -1,8 +1,8 @@
 """
 Register a lecturer, class rep, or admin as a broadcast sender.
 Usage:
-    python add_sender.py "+254791741148" "Potason" "ADMIN"
-    python add_sender.py "+254712345678" "Mr. Kaburu" "LECTURER" "CCS4102"
+    python add_sender.py "+257xxxxxxxxx" "Potason" "ADMIN"
+    python add_sender.py "+2547xxxxxxxx" "Mr. Kaburu" "LECTURER" "CCS4102"
 """
 
 import sys

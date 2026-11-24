@@ -112,7 +112,7 @@ def load_events(since, pauses=(), now=None):
     from database import get_db, _ph
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT student_id_hash, year_group FROM students WHERE status = 'ACTIVE'")
+        cur.execute("SELECT student_id_hash, year_group FROM students WHERE status = 'ACTIVE' AND consent_at IS NOT NULL")
         people = cur.fetchall()
         cur.execute("""SELECT student_id_hash, event_type, detail, created_at, exclude_from_ml
                        FROM engagement_log""")

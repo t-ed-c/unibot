@@ -27,6 +27,29 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 
 MAX_OTP_ATTEMPTS = 3
 
+# Consent shown before anyone registers. Change the version if the wording
+# changes, so you can tell which text each student agreed to.
+CONSENT_VERSION = "v1-2026-11"
+CONSENT_TEXT = (
+    "📄 Before you join: consent\n\n"
+    "UniBot is a final-year project in the Department of Computer Science, "
+    "DKUT (Ted Kimemia, supervised by Mr. Patrick Naivasha).\n\n"
+    "If you join:\n"
+    "• We store your student ID (hashed), phone number (encrypted), "
+    "DKUT email and year.\n"
+    "• We log your questions and when you read broadcasts, to answer you "
+    "and to study student engagement.\n"
+    "• A weekly report may flag students who seem disengaged so an advisor "
+    "can check in. It never shows names and never affects marks.\n"
+    "• Results are reported without names. Your data is deleted within "
+    "3 months after the project is assessed.\n\n"
+    "You can stop anytime by texting STOP. To have your data deleted, "
+    "email unibot.dkut@gmail.com.\n\n"
+    "Reply YES to agree and continue, or NO to cancel."
+)
+YES_WORDS = {"YES", "Y", "AGREE", "I AGREE", "NDIO", "OK", "OKAY"}
+NO_WORDS = {"NO", "N", "DECLINE", "HAPANA"}
+
 
 # ─────────────────────────────────────────────────────────────
 def is_registered(phone: str) -> bool:
@@ -44,11 +67,53 @@ def get_student(phone: str):
         return cur.fetchone()
 
 
+def has_consent(phone: str) -> bool:
+    """True if this registered student has agreed to the consent notice."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_ph("SELECT consent_at FROM students WHERE phone_hash = %s"),
+                    (sha256(phone),))
+        row = cur.fetchone()
+    if not row:
+        return False
+    value = row["consent_at"] if hasattr(row, "keys") else row[0]
+    return bool(value)
+
+
+def handle_existing_consent(phone: str, message: str) -> str:
+    """Students who registered before the consent step are asked once.
+    Their next message shows the notice; YES records consent, NO opts them out."""
+    session = get_session(phone) or {}
+    if session.get("state") != "RECONSENT":
+        set_session(phone, {"state": "RECONSENT"}, expire_seconds=3600)
+        return ("UniBot now asks every student for consent.\n\n" + CONSENT_TEXT)
+
+    answer = message.upper().strip()
+    if answer in YES_WORDS:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(_ph("""UPDATE students SET consent_at = %s, consent_version = %s
+                               WHERE phone_hash = %s"""),
+                        (_now_utc(), CONSENT_VERSION, sha256(phone)))
+        clear_session(phone)
+        return ("✅ Thank you, consent recorded.\n\n"
+                "Ask me anything, e.g. \"When is my next class?\"")
+    if answer in NO_WORDS:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(_ph("UPDATE students SET status = 'OPTED_OUT' WHERE phone_hash = %s"),
+                        (sha256(phone),))
+        clear_session(phone)
+        return ("You have been unsubscribed from UniBot. To have your data deleted, "
+                "email unibot.dkut@gmail.com. Text JOIN anytime to come back.")
+    return "Please reply YES to agree and continue, or NO to leave UniBot."
+
+
 # ─────────────────────────────────────────────────────────────
 def handle_registration_message(phone: str, message: str) -> str:
     """
     State machine for registration. State lives in Redis (or in-memory fallback).
-    States: START → AWAIT_ID → AWAIT_EMAIL → AWAIT_OTP → AWAIT_YEAR → DONE
+    States: START → AWAIT_CONSENT → AWAIT_ID → AWAIT_EMAIL → AWAIT_OTP → AWAIT_YEAR → DONE
     """
     session = get_session(phone) or {}
     state = session.get("state", "START")
@@ -56,14 +121,28 @@ def handle_registration_message(phone: str, message: str) -> str:
     # ── START ──
     if state == "START":
         if message.upper() == "JOIN":
-            set_session(phone, {"state": "AWAIT_ID"})
-            return ("Welcome to UniBot DKUT 🎓\n\n"
-                    "To register, enter your Student ID.\n"
-                    "Format: C026-XX-XXXX/XXXX (check your student card).")
+            set_session(phone, {"state": "AWAIT_CONSENT"})
+            return CONSENT_TEXT
         return ("👋 Hello! This is UniBot — the DKUT CS "
                 "academic assistant.\n\n"
                 "Text JOIN to register and receive class "
                 "updates, timetables and deadline reminders.")
+
+    # ── AWAIT_CONSENT ──
+    if state == "AWAIT_CONSENT":
+        answer = message.upper().strip()
+        if answer in NO_WORDS:
+            clear_session(phone)
+            return ("No problem — you have not been registered and nothing "
+                    "about you has been stored.\n\n"
+                    "Text JOIN anytime if you change your mind.")
+        if answer not in YES_WORDS:
+            return "Please reply YES to agree and continue, or NO to cancel."
+        set_session(phone, {"state": "AWAIT_ID", "consent": CONSENT_VERSION})
+        return ("✅ Thank you.\n\n"
+                "Welcome to UniBot DKUT 🎓\n\n"
+                "To register, enter your Student ID.\n"
+                "Format: C026-XX-XXXX/XXXX (check your student card).")
 
     # ── AWAIT_ID ──
     if state == "AWAIT_ID":
@@ -144,7 +223,8 @@ def handle_registration_message(phone: str, message: str) -> str:
         student_id = session["student_id"]
         email = session["email"]
         complete_registration(phone, student_id, email, year,
-                              is_transfer=session.get("is_transfer", False))
+                              is_transfer=session.get("is_transfer", False),
+                              consent_version=session.get("consent", CONSENT_VERSION))
         clear_session(phone)
 
         return (f"🎉 Registered successfully!\n\n"
@@ -161,9 +241,16 @@ def handle_registration_message(phone: str, message: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
-def complete_registration(phone, student_id, email, year, is_transfer=False):
+def _now_utc() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def complete_registration(phone, student_id, email, year, is_transfer=False,
+                          consent_version=CONSENT_VERSION):
     id_hash = sha256(student_id)
     phone_hash = sha256(phone)
+    consent_at = _now_utc()
 
     with get_db() as conn:
         cur = conn.cursor()
@@ -175,14 +262,18 @@ def complete_registration(phone, student_id, email, year, is_transfer=False):
             old_phone_hash = (list(row.values())[0] if hasattr(row, "keys") else row[0]) if row else None
             cur.execute(_ph("""UPDATE students
                        SET phone_hash = %s, phone_enc = %s, previous_phone_hash = %s,
-                           email = %s, year_group = %s
+                           email = %s, year_group = %s, status = 'ACTIVE',
+                           consent_at = %s, consent_version = %s
                        WHERE student_id_hash = %s"""),
-                        (phone_hash, encrypt_phone(phone), old_phone_hash, email, year, id_hash))
+                        (phone_hash, encrypt_phone(phone), old_phone_hash, email, year,
+                         consent_at, consent_version, id_hash))
         else:
             cur.execute(_ph("""INSERT INTO students
-                       (student_id_hash, phone_hash, phone_enc, email, year_group)
-                       VALUES (%s, %s, %s, %s, %s)"""),
-                        (id_hash, phone_hash, encrypt_phone(phone), email, year))
+                       (student_id_hash, phone_hash, phone_enc, email, year_group,
+                        consent_at, consent_version)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)"""),
+                        (id_hash, phone_hash, encrypt_phone(phone), email, year,
+                         consent_at, consent_version))
 
     # Log AFTER the connection is closed — avoids SQLite lock
     event = "PHONE_TRANSFER" if is_transfer else "REGISTERED"

@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 import logging
 
 from database import init_db
-from auth import handle_registration_message, is_registered
+from auth import (handle_registration_message, is_registered,
+                  has_consent, handle_existing_consent)
 from queries import handle_student_query
 from broadcast import handle_sender_command, is_registered_sender, record_message_status
 from session import get_session, GLOBAL_COMMANDS, handle_global_command
@@ -82,8 +83,11 @@ async def whatsapp_webhook(
         if not is_registered(phone):  # lecturers aren't students: show their commands
             return PlainTextResponse(twiml(sender_help(phone)), media_type="application/xml")
 
-    # ── 5. Registered students → answer their query ──
+    # ── 5. Registered students → consent first (once), then answer their query ──
     if is_registered(phone):
+        if not has_consent(phone):
+            reply = handle_existing_consent(phone, message)
+            return PlainTextResponse(twiml(reply), media_type="application/xml")
         reply = handle_student_query(phone, message)
         return PlainTextResponse(twiml(reply), media_type="application/xml")
 

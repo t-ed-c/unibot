@@ -340,6 +340,8 @@ def init_db():
     add_column_if_missing("delivery_log", "message_sid", "TEXT")
     add_column_if_missing("senders", "phone_enc", "TEXT")   # so senders can get notices
     add_column_if_missing("senders", "email", "TEXT")       # staff email used to verify
+    add_column_if_missing("students", "consent_at", "TEXT")       # when consent was given (UTC)
+    add_column_if_missing("students", "consent_version", "TEXT")  # which consent text
 
     logger.info("All tables created/verified")
 
